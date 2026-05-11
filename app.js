@@ -2940,6 +2940,8 @@ function renderCloudSyncUI() {
   const hasGist = !!cloudGetGistId();
   const patInput = document.getElementById('cloud-pat');
   document.getElementById('btn-cloud-sync').hidden = !hasPat;
+  document.getElementById('btn-cloud-force-pull').hidden = !hasPat;
+  document.getElementById('btn-cloud-force-push').hidden = !hasPat;
   document.getElementById('btn-cloud-disconnect').hidden = !hasPat;
   if (hasPat && patInput && !patInput.value) {
     patInput.placeholder = '••••••••••••••••••••  (saved — paste again to replace)';
@@ -2948,6 +2950,41 @@ function renderCloudSyncUI() {
     setCloudStatus('Connected · gist ' + cloudGetGistId().slice(0, 8) + '…');
   }
 }
+
+document.getElementById('btn-cloud-force-pull').addEventListener('click', async () => {
+  if (!confirm('Force pull from cloud? This REPLACES all local data on this device with the cloud copy, ignoring timestamps.')) return;
+  setCloudStatus('Force-pulling…');
+  try {
+    const gistId = await cloudFindOrCreateGist();
+    const gist = await ghFetch('/gists/' + gistId);
+    const file = gist.files && gist.files[GIST_FILENAME];
+    if (!file || !file.content) {
+      setCloudStatus('Cloud gist is empty — nothing to pull.');
+      return;
+    }
+    const remote = JSON.parse(file.content);
+    state = mergeState(remote);
+    save({ skipCloud: true });
+    renderAll();
+    const remoteTime = remote.lastModified ? new Date(remote.lastModified).toLocaleString() : 'unknown';
+    setCloudStatus('Force-pulled · cloud version from ' + remoteTime);
+    flash('Pulled from cloud');
+  } catch (e) {
+    setCloudStatus('Force pull failed: ' + e.message);
+  }
+});
+
+document.getElementById('btn-cloud-force-push').addEventListener('click', async () => {
+  if (!confirm('Force push to cloud? This REPLACES the cloud copy with this device\'s data, ignoring timestamps. Other devices will pull this on their next sync.')) return;
+  setCloudStatus('Force-pushing…');
+  try {
+    await cloudPush();
+    setCloudStatus('Force-pushed · ' + new Date().toLocaleString());
+    flash('Pushed to cloud');
+  } catch (e) {
+    setCloudStatus('Force push failed: ' + e.message);
+  }
+});
 
 document.getElementById('btn-cloud-save-pat').addEventListener('click', async () => {
   const input = document.getElementById('cloud-pat');
