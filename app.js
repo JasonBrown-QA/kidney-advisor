@@ -1439,11 +1439,17 @@ document.getElementById('btn-clear').addEventListener('click', () => {
 });
 
 document.getElementById('btn-paste-import').addEventListener('click', () => {
-  const text = document.getElementById('paste-import-text').value.trim();
-  if (!text) {
+  const raw = document.getElementById('paste-import-text').value.trim();
+  if (!raw) {
     alert('Paste the JSON text into the box first.');
     return;
   }
+  // iOS Smart Punctuation rewrites straight quotes to curly ones during paste,
+  // and may insert non-breaking spaces. Normalize before JSON.parse.
+  const text = raw
+    .replace(/[“”„‟″‶]/g, '"')
+    .replace(/[‘’‚‛′‵]/g, "'")
+    .replace(/ /g, ' ');
   let incoming;
   try {
     incoming = JSON.parse(text);
