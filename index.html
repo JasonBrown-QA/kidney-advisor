@@ -604,6 +604,18 @@
       </details>
     </div>
 
+    <div class="card">
+      <h3>Sync to another device</h3>
+      <p>Generate a one-tap link that contains all your current data. Send it to yourself (iMessage, email, or Notes), tap on the other device, confirm — done.</p>
+      <p class="hint">The data lives in the URL fragment after <code>#</code>, which the browser never sends to GitHub. Your PHI stays between your devices only.</p>
+      <div class="row">
+        <button id="btn-sync-link" class="primary">Generate sync link</button>
+        <button id="btn-sync-copy" class="secondary" hidden>Copy link</button>
+      </div>
+      <div id="sync-link-stats" class="hint" style="margin-top:8px" hidden></div>
+      <textarea id="sync-link-text" rows="3" readonly autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style="width:100%;font-family:monospace;font-size:11px;margin-top:8px;word-break:break-all" hidden></textarea>
+    </div>
+
     <div class="card guidance">
       <h3>About</h3>
       <p>Kidney Advisor is a personal self-management tool for chronic kidney disease stage 3. It does not transmit your data anywhere — everything stays in your browser's local storage on this device, plus any sync file you opt-in to.</p>

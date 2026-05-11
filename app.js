@@ -2649,16 +2649,52 @@ function checkHashImport() {
   }, 200);
 }
 
-// Helper for generating shareable links from console / future Export-link button
+// Helper for generating shareable links. Used by Settings → Generate sync link
+// and also exposed on window for power-user console access.
 window.makeImportLink = function () {
   const json = JSON.stringify(state);
   const bytes = new TextEncoder().encode(json);
   let bin = '';
   for (const b of bytes) bin += String.fromCharCode(b);
   const b64 = btoa(bin);
-  const url = location.origin + location.pathname + '#data=' + encodeURIComponent(b64);
-  console.log('Length:', url.length, 'chars');
-  return url;
+  return location.origin + location.pathname + '#data=' + encodeURIComponent(b64);
 };
+
+document.getElementById('btn-sync-link').addEventListener('click', () => {
+  const url = window.makeImportLink();
+  const textarea = document.getElementById('sync-link-text');
+  const stats = document.getElementById('sync-link-stats');
+  const copyBtn = document.getElementById('sync-link-copy') || document.getElementById('btn-sync-copy');
+  textarea.value = url;
+  textarea.hidden = false;
+  stats.hidden = false;
+  copyBtn.hidden = false;
+  const kb = (url.length / 1024).toFixed(1);
+  stats.textContent = `Link length: ${url.length.toLocaleString()} characters (~${kb} KB). Tap Copy, then send it to yourself.`;
+  // Auto-select for easy copy on desktop
+  textarea.focus();
+  textarea.select();
+});
+
+document.getElementById('btn-sync-copy').addEventListener('click', async () => {
+  const textarea = document.getElementById('sync-link-text');
+  if (!textarea.value) return;
+  let copied = false;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(textarea.value);
+      copied = true;
+    } catch (e) {
+      // Fall through to selection fallback
+    }
+  }
+  if (!copied) {
+    // Fallback: select + execCommand for older Safari
+    textarea.focus();
+    textarea.select();
+    try { copied = document.execCommand('copy'); } catch (e) {}
+  }
+  flash(copied ? 'Link copied to clipboard' : 'Could not copy — long-press the link box to select and copy manually');
+});
 
 init();
