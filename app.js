@@ -2609,6 +2609,56 @@ async function init() {
   setInterval(checkReminders, 60 * 1000);
   // Run once shortly after load in case a reminder time has just passed
   setTimeout(checkReminders, 5000);
+
+  checkHashImport();
 }
+
+// Auto-import from shareable URL hash. The hash never reaches the server,
+// so PHI stays client-side. Format: #data=<base64-encoded JSON>
+function checkHashImport() {
+  const hash = location.hash || '';
+  if (!hash.startsWith('#data=')) return;
+
+  let json;
+  try {
+    const b64 = decodeURIComponent(hash.slice('#data='.length));
+    json = new TextDecoder().decode(
+      Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+    );
+  } catch (e) {
+    console.error('Decode failed', e);
+    alert('Could not decode the import link — it may be truncated or corrupt.');
+    history.replaceState(null, '', location.pathname + location.search);
+    return;
+  }
+
+  // Clear hash immediately so refresh/back doesn't re-trigger the import
+  history.replaceState(null, '', location.pathname + location.search);
+
+  setTimeout(() => {
+    if (!confirm('A Kidney Advisor data link was detected. Replace ALL current data on this device with the linked data?')) return;
+    try {
+      const incoming = JSON.parse(json);
+      state = mergeState(incoming);
+      save();
+      renderAll();
+      flash('Imported from shared link');
+    } catch (e) {
+      alert('Import failed: ' + e.message);
+    }
+  }, 200);
+}
+
+// Helper for generating shareable links from console / future Export-link button
+window.makeImportLink = function () {
+  const json = JSON.stringify(state);
+  const bytes = new TextEncoder().encode(json);
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  const b64 = btoa(bin);
+  const url = location.origin + location.pathname + '#data=' + encodeURIComponent(b64);
+  console.log('Length:', url.length, 'chars');
+  return url;
+};
 
 init();
