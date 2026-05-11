@@ -597,10 +597,11 @@
       <details style="margin-top:14px">
         <summary style="cursor:pointer;font-weight:600">Paste JSON instead (no file needed — works on iPhone)</summary>
         <p class="hint" style="margin-top:8px">Copy the contents of a Kidney Advisor export, paste it here, then tap Import. Useful when you can't get the file onto your phone.</p>
-        <textarea id="paste-import-text" rows="6" placeholder='{"labs":[...],"bp":[...],...}' autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style="width:100%;font-family:monospace;font-size:12px"></textarea>
+        <textarea id="paste-import-text" rows="6" placeholder='{"labs":[...],"bp":[...],...} — or paste a full sync URL containing #data=...' autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style="width:100%;font-family:monospace;font-size:12px"></textarea>
         <div class="row" style="margin-top:8px">
           <button id="btn-paste-import" class="secondary">Import pasted text</button>
         </div>
+        <p class="hint" style="margin-top:8px">Accepts either raw JSON or a full sync URL — the app will auto-detect.</p>
       </details>
     </div>
 

@@ -1438,32 +1438,47 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   flash('All data cleared');
 });
 
-document.getElementById('btn-paste-import').addEventListener('click', () => {
+document.getElementById('btn-paste-import').addEventListener('click', async () => {
   const raw = document.getElementById('paste-import-text').value.trim();
   if (!raw) {
-    alert('Paste the JSON text into the box first.');
+    alert('Paste JSON or a sync URL into the box first.');
     return;
   }
-  // iOS Smart Punctuation rewrites straight quotes to curly ones during paste,
-  // and may insert non-breaking spaces. Normalize before JSON.parse.
-  const text = raw
-    .replace(/[“”„‟″‶]/g, '"')
-    .replace(/[‘’‚‛′‵]/g, "'")
-    .replace(/ /g, ' ');
   let incoming;
-  try {
-    incoming = JSON.parse(text);
-  } catch (err) {
-    alert('That doesn’t look like valid JSON: ' + err.message);
-    return;
+  // If the user pasted a full sync URL (containing #data=...), extract the
+  // payload and decode it the same way checkHashImport() would.
+  const hashMatch = raw.match(/#data=([^\s]+)/);
+  if (hashMatch) {
+    try {
+      const payload = decodeURIComponent(hashMatch[1]);
+      const json = payload.startsWith('gz1:')
+        ? await gunzipBase64(payload.slice(4))
+        : new TextDecoder().decode(Uint8Array.from(atob(payload), c => c.charCodeAt(0)));
+      incoming = JSON.parse(json);
+    } catch (err) {
+      alert('Could not decode the pasted URL: ' + err.message + '. If you copied it from iMessage, it may have been truncated — use Copy raw JSON on the source device instead.');
+      return;
+    }
+  } else {
+    // Treat as raw JSON. Strip iOS smart punctuation that breaks JSON.parse.
+    const text = raw
+      .replace(/[“”„‟″‶]/g, '"')
+      .replace(/[‘’‚‛′‵]/g, "'")
+      .replace(/ /g, ' ');
+    try {
+      incoming = JSON.parse(text);
+    } catch (err) {
+      alert('That doesn’t look like valid JSON or a sync URL: ' + err.message);
+      return;
+    }
   }
-  if (!confirm('Replace all current data with the pasted JSON?')) return;
+  if (!confirm('Replace all current data with the pasted content?')) return;
   try {
     state = mergeState(incoming);
     save();
     renderAll();
     document.getElementById('paste-import-text').value = '';
-    flash('Data imported from pasted text');
+    flash('Data imported');
   } catch (err) {
     alert('Import failed while applying the data: ' + err.message);
   }
@@ -2611,6 +2626,63 @@ async function init() {
   setTimeout(checkReminders, 5000);
 
   checkHashImport().catch(err => console.error('Hash import error', err));
+  setupPullToRefresh();
+}
+
+// Pull-to-refresh — iOS standalone PWAs don't get the native gesture, so we
+// add it ourselves. Swiping down at scrollY=0 past the threshold triggers
+// location.reload(), which fetches the latest code from GitHub Pages.
+function setupPullToRefresh() {
+  const THRESHOLD = 80;
+  let startY = null;
+  let pulling = false;
+  const indicator = document.createElement('div');
+  indicator.id = 'pull-indicator';
+  indicator.style.cssText = [
+    'position:fixed', 'top:0', 'left:0', 'right:0',
+    'height:56px', 'line-height:56px', 'text-align:center',
+    'font-size:14px', 'font-weight:600',
+    'background:var(--accent, #0a6c8e)', 'color:white',
+    'transform:translateY(-100%)',
+    'transition:transform 180ms ease-out',
+    'z-index:9999', 'pointer-events:none',
+    'box-shadow:0 2px 6px rgba(0,0,0,0.15)'
+  ].join(';');
+  indicator.textContent = '↓ Pull to refresh';
+  document.body.appendChild(indicator);
+
+  document.addEventListener('touchstart', (e) => {
+    if (window.scrollY > 0) { startY = null; return; }
+    startY = e.touches[0].clientY;
+    pulling = false;
+  }, { passive: true });
+
+  document.addEventListener('touchmove', (e) => {
+    if (startY === null) return;
+    const delta = e.touches[0].clientY - startY;
+    if (delta > 10 && window.scrollY === 0) {
+      pulling = true;
+      const shown = Math.min(delta, THRESHOLD + 30);
+      indicator.style.transition = 'none';
+      indicator.style.transform = 'translateY(' + (-100 + (shown / (THRESHOLD + 30)) * 100) + '%)';
+      indicator.textContent = delta > THRESHOLD ? '↻ Release to refresh' : '↓ Pull to refresh';
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchend', (e) => {
+    if (!pulling || startY === null) { startY = null; pulling = false; return; }
+    const delta = e.changedTouches[0].clientY - startY;
+    indicator.style.transition = 'transform 180ms ease-out';
+    if (delta > THRESHOLD) {
+      indicator.textContent = '↻ Refreshing…';
+      indicator.style.transform = 'translateY(0)';
+      setTimeout(() => location.reload(), 250);
+    } else {
+      indicator.style.transform = 'translateY(-100%)';
+    }
+    startY = null;
+    pulling = false;
+  });
 }
 
 // Auto-import from shareable URL hash. The hash never reaches the server,
