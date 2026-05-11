@@ -75,10 +75,11 @@ function blankState() {
   };
 }
 
-function save() {
+function save(opts = {}) {
   state.lastModified = Date.now();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   scheduleSyncWrite();
+  if (!opts.skipCloud) scheduleCloudPush();
 }
 
 function uid() {
@@ -2627,6 +2628,16 @@ async function init() {
 
   checkHashImport().catch(err => console.error('Hash import error', err));
   setupPullToRefresh();
+  renderCloudSyncUI();
+
+  // On launch, if cloud sync is configured, silently pull if the cloud copy
+  // is newer. Asks for confirmation before replacing local data.
+  if (cloudGetPat()) {
+    cloudPullIfNewer({ prompt: true }).catch(err => {
+      console.warn('Cloud pull on startup failed', err);
+      setCloudStatus('Auto-pull failed: ' + err.message);
+    });
+  }
 }
 
 // Pull-to-refresh — iOS standalone PWAs don't get the native gesture, so we
@@ -2674,9 +2685,20 @@ function setupPullToRefresh() {
     const delta = e.changedTouches[0].clientY - startY;
     indicator.style.transition = 'transform 180ms ease-out';
     if (delta > THRESHOLD) {
-      indicator.textContent = '↻ Refreshing…';
       indicator.style.transform = 'translateY(0)';
-      setTimeout(() => location.reload(), 250);
+      if (cloudGetPat()) {
+        indicator.textContent = '↻ Syncing from cloud…';
+        cloudSyncNow({ prompt: true }).then(() => {
+          indicator.textContent = '✓ Synced';
+          setTimeout(() => { indicator.style.transform = 'translateY(-100%)'; }, 800);
+        }).catch(err => {
+          indicator.textContent = '⚠ ' + err.message.slice(0, 60);
+          setTimeout(() => { indicator.style.transform = 'translateY(-100%)'; }, 2500);
+        });
+      } else {
+        indicator.textContent = '↻ Refreshing…';
+        setTimeout(() => location.reload(), 250);
+      }
     } else {
       indicator.style.transform = 'translateY(-100%)';
     }
@@ -2753,6 +2775,214 @@ async function gunzipBase64(b64) {
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
   return await new Response(stream).text();
 }
+
+// ─── GitHub Gist cloud sync ──────────────────────────────────────────────
+// One private gist holds the user's full state. Every save pushes after a
+// 2-second debounce. Pull-to-refresh and init both fetch the remote and
+// pull if its lastModified beats local.
+
+const GIST_FILENAME = 'kidney-advisor.json';
+const GIST_PAT_KEY = 'kidney-advisor-gist-pat';
+const GIST_ID_KEY = 'kidney-advisor-gist-id';
+let cloudSyncTimer = null;
+let cloudSyncing = false;
+
+function cloudGetPat() { return localStorage.getItem(GIST_PAT_KEY) || ''; }
+function cloudGetGistId() { return localStorage.getItem(GIST_ID_KEY) || ''; }
+
+async function ghFetch(path, opts = {}) {
+  const pat = cloudGetPat();
+  if (!pat) throw new Error('No GitHub token saved');
+  const res = await fetch('https://api.github.com' + path, {
+    ...opts,
+    headers: {
+      'Authorization': 'Bearer ' + pat,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      ...(opts.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(opts.headers || {}),
+    },
+  });
+  if (!res.ok) {
+    let detail = await res.text();
+    try { detail = JSON.parse(detail).message || detail; } catch (e) {}
+    throw new Error('GitHub API ' + res.status + ': ' + detail.slice(0, 200));
+  }
+  return res.json();
+}
+
+async function cloudFindOrCreateGist() {
+  let gistId = cloudGetGistId();
+  if (gistId) return gistId;
+
+  // First-device path: search the user's gists for an existing one.
+  const gists = await ghFetch('/gists?per_page=100');
+  const existing = (gists || []).find(g => g.files && g.files[GIST_FILENAME]);
+  if (existing) {
+    localStorage.setItem(GIST_ID_KEY, existing.id);
+    return existing.id;
+  }
+
+  // None found — create a new private gist seeded with the current state.
+  const created = await ghFetch('/gists', {
+    method: 'POST',
+    body: JSON.stringify({
+      description: 'Kidney Advisor — personal medical data (private, do not share)',
+      public: false,
+      files: { [GIST_FILENAME]: { content: JSON.stringify(state, null, 2) } },
+    }),
+  });
+  localStorage.setItem(GIST_ID_KEY, created.id);
+  return created.id;
+}
+
+async function cloudPush() {
+  const gistId = await cloudFindOrCreateGist();
+  await ghFetch('/gists/' + gistId, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      files: { [GIST_FILENAME]: { content: JSON.stringify(state, null, 2) } },
+    }),
+  });
+}
+
+async function cloudPullIfNewer({ prompt = true } = {}) {
+  const gistId = await cloudFindOrCreateGist();
+  const gist = await ghFetch('/gists/' + gistId);
+  const file = gist.files && gist.files[GIST_FILENAME];
+  if (!file || !file.content) return { pulled: false, reason: 'remote-empty' };
+
+  let remote;
+  try { remote = JSON.parse(file.content); } catch (e) {
+    return { pulled: false, reason: 'remote-malformed' };
+  }
+  const remoteTime = remote.lastModified || 0;
+  const localTime = state.lastModified || 0;
+  if (remoteTime <= localTime + 1000) {
+    return { pulled: false, reason: 'local-up-to-date', remoteTime, localTime };
+  }
+  if (prompt) {
+    const when = remoteTime ? new Date(remoteTime).toLocaleString() : 'unknown time';
+    if (!confirm('Cloud has newer data (saved ' + when + '). Replace local data with the cloud copy?')) {
+      return { pulled: false, reason: 'user-declined' };
+    }
+  }
+  state = mergeState(remote);
+  save({ skipCloud: true });
+  renderAll();
+  return { pulled: true, remoteTime };
+}
+
+// Two-way sync: pull if remote newer; otherwise push if local newer.
+async function cloudSyncNow({ prompt = false } = {}) {
+  if (cloudSyncing) return { skipped: true };
+  if (!cloudGetPat()) throw new Error('No GitHub token saved');
+  cloudSyncing = true;
+  setCloudStatus('Syncing…');
+  try {
+    const gistId = await cloudFindOrCreateGist();
+    const gist = await ghFetch('/gists/' + gistId);
+    const file = gist.files && gist.files[GIST_FILENAME];
+    let remote = null;
+    if (file && file.content) {
+      try { remote = JSON.parse(file.content); } catch (e) { remote = null; }
+    }
+    const remoteTime = (remote && remote.lastModified) || 0;
+    const localTime = state.lastModified || 0;
+
+    if (remote && remoteTime > localTime + 1000) {
+      if (!prompt || confirm('Cloud has newer data (' + new Date(remoteTime).toLocaleString() + '). Pull from cloud and replace local?')) {
+        state = mergeState(remote);
+        save({ skipCloud: true });
+        renderAll();
+        setCloudStatus('Pulled from cloud · ' + new Date(remoteTime).toLocaleString());
+        return { direction: 'pull' };
+      }
+      setCloudStatus('Pull declined — local kept');
+      return { direction: 'none' };
+    }
+    // Push local up
+    await ghFetch('/gists/' + gistId, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        files: { [GIST_FILENAME]: { content: JSON.stringify(state, null, 2) } },
+      }),
+    });
+    setCloudStatus('Pushed to cloud · ' + new Date(state.lastModified || Date.now()).toLocaleString());
+    return { direction: 'push' };
+  } catch (e) {
+    setCloudStatus('Sync failed: ' + e.message);
+    throw e;
+  } finally {
+    cloudSyncing = false;
+  }
+}
+
+function scheduleCloudPush() {
+  if (!cloudGetPat()) return;
+  clearTimeout(cloudSyncTimer);
+  cloudSyncTimer = setTimeout(() => {
+    cloudPush().then(() => {
+      setCloudStatus('Auto-saved to cloud · ' + new Date().toLocaleString());
+    }).catch(e => {
+      setCloudStatus('Auto-save failed: ' + e.message);
+    });
+  }, 2000);
+}
+
+function setCloudStatus(text) {
+  const el = document.getElementById('cloud-sync-status');
+  if (el) el.textContent = text;
+}
+
+function renderCloudSyncUI() {
+  const hasPat = !!cloudGetPat();
+  const hasGist = !!cloudGetGistId();
+  const patInput = document.getElementById('cloud-pat');
+  document.getElementById('btn-cloud-sync').hidden = !hasPat;
+  document.getElementById('btn-cloud-disconnect').hidden = !hasPat;
+  if (hasPat && patInput && !patInput.value) {
+    patInput.placeholder = '••••••••••••••••••••  (saved — paste again to replace)';
+  }
+  if (hasPat && hasGist && !document.getElementById('cloud-sync-status').textContent) {
+    setCloudStatus('Connected · gist ' + cloudGetGistId().slice(0, 8) + '…');
+  }
+}
+
+document.getElementById('btn-cloud-save-pat').addEventListener('click', async () => {
+  const input = document.getElementById('cloud-pat');
+  const pat = input.value.trim();
+  if (!pat) {
+    alert('Paste your GitHub personal access token first.');
+    return;
+  }
+  if (!/^(ghp_|github_pat_)/.test(pat)) {
+    if (!confirm('That doesn\'t look like a GitHub token (should start with ghp_ or github_pat_). Save anyway?')) return;
+  }
+  localStorage.setItem(GIST_PAT_KEY, pat);
+  input.value = '';
+  renderCloudSyncUI();
+  setCloudStatus('Token saved. Connecting…');
+  try {
+    await cloudSyncNow({ prompt: true });
+    renderCloudSyncUI();
+  } catch (e) {
+    // Status already set by cloudSyncNow
+  }
+});
+
+document.getElementById('btn-cloud-sync').addEventListener('click', async () => {
+  try { await cloudSyncNow({ prompt: true }); }
+  catch (e) { /* status set by helper */ }
+});
+
+document.getElementById('btn-cloud-disconnect').addEventListener('click', () => {
+  if (!confirm('Disconnect cloud sync? Your GitHub token will be removed from this device. Your data and the gist itself stay intact.')) return;
+  localStorage.removeItem(GIST_PAT_KEY);
+  localStorage.removeItem(GIST_ID_KEY);
+  setCloudStatus('Disconnected');
+  renderCloudSyncUI();
+});
 
 // Helper for generating shareable links. Used by Settings → Generate sync link
 // and also exposed on window for power-user console access.

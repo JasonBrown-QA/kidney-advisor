@@ -606,6 +606,32 @@
     </div>
 
     <div class="card">
+      <h3>Cross-device auto-sync (GitHub Gist)</h3>
+      <p>Once set up, every change auto-saves to a private gist in your GitHub account. Open the app on another device, paste the same token, and it pulls your data instantly. Pull-to-refresh also re-syncs.</p>
+      <details style="margin-top:6px">
+        <summary style="cursor:pointer;font-weight:600">Setup (3 minutes, once per device)</summary>
+        <ol style="margin:8px 0 0 18px;padding:0">
+          <li>Tap <a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=Kidney+Advisor+Sync" target="_blank" rel="noopener">this link</a> (signs you into GitHub if needed).</li>
+          <li>Set <strong>Expiration</strong> to "No expiration" or 1 year.</li>
+          <li>Verify <strong>gist</strong> is checked under Select scopes. Nothing else needs to be checked.</li>
+          <li>Scroll to bottom → <strong>Generate token</strong>.</li>
+          <li>Copy the token (starts with <code>ghp_</code> or <code>github_pat_</code>) and paste it below.</li>
+          <li>Tap <strong>Save &amp; sync</strong>. The first device creates the gist; later devices auto-discover and pull from it.</li>
+        </ol>
+      </details>
+      <div style="margin-top:10px">
+        <label for="cloud-pat" style="display:block;font-weight:600;font-size:13px">GitHub token</label>
+        <input type="password" id="cloud-pat" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style="width:100%;font-family:monospace;font-size:13px;margin-top:4px" placeholder="ghp_..." />
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="btn-cloud-save-pat" class="primary">Save &amp; sync</button>
+        <button id="btn-cloud-sync" class="secondary" hidden>Sync now</button>
+        <button id="btn-cloud-disconnect" class="danger" hidden>Disconnect</button>
+      </div>
+      <div id="cloud-sync-status" class="hint" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card">
       <h3>Sync to another device</h3>
       <p>Generate a one-tap link that contains all your current data, or copy the raw JSON to paste on the other device. Send it to yourself (iMessage, email, or Notes), then on the other device tap the link or paste the JSON into the Backup &amp; Restore card above.</p>
       <p class="hint">The link's data sits in the URL fragment after <code>#</code>, which the browser never sends to GitHub. Your PHI stays between your devices only.</p>
