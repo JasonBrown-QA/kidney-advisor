@@ -2651,13 +2651,26 @@ function checkHashImport() {
 
 // Helper for generating shareable links. Used by Settings → Generate sync link
 // and also exposed on window for power-user console access.
+//
+// We always emit the public HTTPS URL — running the app from file:// or
+// localhost would otherwise produce a link the iPhone can't open.
+const PUBLIC_APP_URL = 'https://jasonbrown-qa.github.io/kidney-advisor/';
+
 window.makeImportLink = function () {
   const json = JSON.stringify(state);
   const bytes = new TextEncoder().encode(json);
   let bin = '';
   for (const b of bytes) bin += String.fromCharCode(b);
   const b64 = btoa(bin);
-  return location.origin + location.pathname + '#data=' + encodeURIComponent(b64);
+
+  const origin = location.origin || '';
+  const isLocal = origin === 'null' || origin === '' ||
+                  origin.startsWith('file:') ||
+                  origin.startsWith('http://localhost') ||
+                  origin.startsWith('http://127.') ||
+                  origin.startsWith('http://[::1]');
+  const base = isLocal ? PUBLIC_APP_URL : (origin + location.pathname);
+  return base + '#data=' + encodeURIComponent(b64);
 };
 
 document.getElementById('btn-sync-link').addEventListener('click', () => {
