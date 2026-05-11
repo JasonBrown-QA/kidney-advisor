@@ -606,14 +606,16 @@
 
     <div class="card">
       <h3>Sync to another device</h3>
-      <p>Generate a one-tap link that contains all your current data. Send it to yourself (iMessage, email, or Notes), tap on the other device, confirm — done.</p>
-      <p class="hint">The data lives in the URL fragment after <code>#</code>, which the browser never sends to GitHub. Your PHI stays between your devices only.</p>
+      <p>Generate a one-tap link that contains all your current data, or copy the raw JSON to paste on the other device. Send it to yourself (iMessage, email, or Notes), then on the other device tap the link or paste the JSON into the Backup &amp; Restore card above.</p>
+      <p class="hint">The link's data sits in the URL fragment after <code>#</code>, which the browser never sends to GitHub. Your PHI stays between your devices only.</p>
       <div class="row">
         <button id="btn-sync-link" class="primary">Generate sync link</button>
         <button id="btn-sync-copy" class="secondary" hidden>Copy link</button>
+        <button id="btn-sync-copy-json" class="secondary">Copy raw JSON</button>
       </div>
       <div id="sync-link-stats" class="hint" style="margin-top:8px" hidden></div>
       <textarea id="sync-link-text" rows="3" readonly autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style="width:100%;font-family:monospace;font-size:11px;margin-top:8px;word-break:break-all" hidden></textarea>
+      <p class="hint" style="margin-top:10px"><strong>If a link import fails with "incomplete" or "unexpected end of JSON":</strong> the URL got truncated in transit (iMessage and some email clients silently cap link length). Use <strong>Copy raw JSON</strong> instead — paste the result into <em>Paste JSON instead</em> in the Backup &amp; Restore card. No length limit, always works.</p>
     </div>
 
     <div class="card guidance">

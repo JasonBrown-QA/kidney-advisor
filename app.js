@@ -2610,35 +2610,51 @@ async function init() {
   // Run once shortly after load in case a reminder time has just passed
   setTimeout(checkReminders, 5000);
 
-  checkHashImport();
+  checkHashImport().catch(err => console.error('Hash import error', err));
 }
 
 // Auto-import from shareable URL hash. The hash never reaches the server,
-// so PHI stays client-side. Format: #data=<base64-encoded JSON>
-function checkHashImport() {
+// so PHI stays client-side.
+// Two formats supported for backward-compat:
+//   #data=<base64 of raw JSON>           (legacy, ~16KB for Jason's record)
+//   #data=gz1:<base64 of gzipped JSON>   (current, ~5KB — survives iMessage)
+async function checkHashImport() {
   const hash = location.hash || '';
   if (!hash.startsWith('#data=')) return;
 
+  // Clear hash immediately so refresh/back doesn't re-trigger the import.
+  // Capture the value first.
+  const payload = hash.slice('#data='.length);
+  history.replaceState(null, '', location.pathname + location.search);
+
   let json;
   try {
-    const b64 = decodeURIComponent(hash.slice('#data='.length));
-    json = new TextDecoder().decode(
-      Uint8Array.from(atob(b64), c => c.charCodeAt(0))
-    );
+    const raw = decodeURIComponent(payload);
+    if (raw.startsWith('gz1:')) {
+      json = await gunzipBase64(raw.slice(4));
+    } else {
+      json = new TextDecoder().decode(
+        Uint8Array.from(atob(raw), c => c.charCodeAt(0))
+      );
+    }
   } catch (e) {
     console.error('Decode failed', e);
-    alert('Could not decode the import link — it may be truncated or corrupt.');
-    history.replaceState(null, '', location.pathname + location.search);
+    alert('Could not decode the import link — it may have been truncated by iMessage or email. Try the Copy JSON / Paste JSON workflow in Settings instead.');
     return;
   }
 
-  // Clear hash immediately so refresh/back doesn't re-trigger the import
-  history.replaceState(null, '', location.pathname + location.search);
+  // Validate the decoded JSON is complete before prompting
+  let incoming;
+  try {
+    incoming = JSON.parse(json);
+  } catch (e) {
+    alert('Import link was incomplete (' + e.message + '). The URL was probably truncated in transit. Use Settings → Copy JSON / Paste JSON instead — that path has no length limit.');
+    return;
+  }
 
   setTimeout(() => {
     if (!confirm('A Kidney Advisor data link was detected. Replace ALL current data on this device with the linked data?')) return;
     try {
-      const incoming = JSON.parse(json);
       state = mergeState(incoming);
       save();
       renderAll();
@@ -2649,6 +2665,23 @@ function checkHashImport() {
   }, 200);
 }
 
+// Gzip/base64 helpers using built-in CompressionStream (Safari 16.4+, 2023+)
+async function gzipString(str) {
+  const stream = new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'));
+  const buffer = await new Response(stream).arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+async function gunzipBase64(b64) {
+  const binStr = atob(b64);
+  const bytes = new Uint8Array(binStr.length);
+  for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return await new Response(stream).text();
+}
+
 // Helper for generating shareable links. Used by Settings → Generate sync link
 // and also exposed on window for power-user console access.
 //
@@ -2656,58 +2689,87 @@ function checkHashImport() {
 // localhost would otherwise produce a link the iPhone can't open.
 const PUBLIC_APP_URL = 'https://jasonbrown-qa.github.io/kidney-advisor/';
 
-window.makeImportLink = function () {
-  const json = JSON.stringify(state);
-  const bytes = new TextEncoder().encode(json);
-  let bin = '';
-  for (const b of bytes) bin += String.fromCharCode(b);
-  const b64 = btoa(bin);
-
+function publicBaseUrl() {
   const origin = location.origin || '';
   const isLocal = origin === 'null' || origin === '' ||
                   origin.startsWith('file:') ||
                   origin.startsWith('http://localhost') ||
                   origin.startsWith('http://127.') ||
                   origin.startsWith('http://[::1]');
-  const base = isLocal ? PUBLIC_APP_URL : (origin + location.pathname);
-  return base + '#data=' + encodeURIComponent(b64);
+  return isLocal ? PUBLIC_APP_URL : (origin + location.pathname);
+}
+
+window.makeImportLink = async function () {
+  const json = JSON.stringify(state);
+  const b64 = await gzipString(json);
+  return publicBaseUrl() + '#data=' + encodeURIComponent('gz1:' + b64);
 };
 
-document.getElementById('btn-sync-link').addEventListener('click', () => {
-  const url = window.makeImportLink();
+document.getElementById('btn-sync-link').addEventListener('click', async () => {
   const textarea = document.getElementById('sync-link-text');
   const stats = document.getElementById('sync-link-stats');
-  const copyBtn = document.getElementById('sync-link-copy') || document.getElementById('btn-sync-copy');
-  textarea.value = url;
-  textarea.hidden = false;
+  const copyBtn = document.getElementById('btn-sync-copy');
   stats.hidden = false;
-  copyBtn.hidden = false;
-  const kb = (url.length / 1024).toFixed(1);
-  stats.textContent = `Link length: ${url.length.toLocaleString()} characters (~${kb} KB). Tap Copy, then send it to yourself.`;
-  // Auto-select for easy copy on desktop
-  textarea.focus();
-  textarea.select();
+  stats.textContent = 'Compressing…';
+  try {
+    const url = await window.makeImportLink();
+    textarea.value = url;
+    textarea.hidden = false;
+    copyBtn.hidden = false;
+    const kb = (url.length / 1024).toFixed(1);
+    const jsonKb = (JSON.stringify(state).length / 1024).toFixed(1);
+    stats.textContent = `Link is ${url.length.toLocaleString()} chars (~${kb} KB, gzipped from ~${jsonKb} KB JSON). Tap Copy, then send it to yourself.`;
+    textarea.focus();
+    textarea.select();
+  } catch (e) {
+    stats.textContent = 'Could not build the link: ' + e.message + '. Use Copy JSON below instead.';
+  }
 });
 
-document.getElementById('btn-sync-copy').addEventListener('click', async () => {
-  const textarea = document.getElementById('sync-link-text');
-  if (!textarea.value) return;
+async function copyToClipboard(text, fallbackTextarea) {
   let copied = false;
   if (navigator.clipboard && navigator.clipboard.writeText) {
     try {
-      await navigator.clipboard.writeText(textarea.value);
+      await navigator.clipboard.writeText(text);
       copied = true;
     } catch (e) {
       // Fall through to selection fallback
     }
   }
-  if (!copied) {
-    // Fallback: select + execCommand for older Safari
-    textarea.focus();
-    textarea.select();
+  if (!copied && fallbackTextarea) {
+    fallbackTextarea.value = text;
+    fallbackTextarea.hidden = false;
+    fallbackTextarea.focus();
+    fallbackTextarea.select();
     try { copied = document.execCommand('copy'); } catch (e) {}
   }
-  flash(copied ? 'Link copied to clipboard' : 'Could not copy — long-press the link box to select and copy manually');
+  return copied;
+}
+
+document.getElementById('btn-sync-copy').addEventListener('click', async () => {
+  const textarea = document.getElementById('sync-link-text');
+  if (!textarea.value) return;
+  const ok = await copyToClipboard(textarea.value, textarea);
+  flash(ok ? 'Link copied to clipboard' : 'Could not copy — long-press the link box to select and copy manually');
+});
+
+document.getElementById('btn-sync-copy-json').addEventListener('click', async () => {
+  const json = JSON.stringify(state);
+  const textarea = document.getElementById('sync-link-text');
+  const stats = document.getElementById('sync-link-stats');
+  const ok = await copyToClipboard(json, textarea);
+  stats.hidden = false;
+  const kb = (json.length / 1024).toFixed(1);
+  stats.textContent = ok
+    ? `Copied ${json.length.toLocaleString()} chars (~${kb} KB) of raw JSON. On the other device, paste into Backup & Restore → "Paste JSON instead".`
+    : `Could not copy automatically. The JSON is shown below — long-press to select all and copy manually.`;
+  if (!ok) {
+    textarea.value = json;
+    textarea.hidden = false;
+    textarea.focus();
+    textarea.select();
+  }
+  if (ok) flash('Raw JSON copied to clipboard');
 });
 
 init();
