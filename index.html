@@ -128,9 +128,9 @@
           <button id="btn-ccda-import" class="secondary">Import CCDA XML</button>
           <button id="btn-docx-import" class="secondary">Import Word (.docx)</button>
           <button id="btn-csv-export" class="secondary">Export Labs CSV</button>
-          <input type="file" id="csv-file" accept=".csv,text/csv" style="display:none" />
-          <input type="file" id="ccda-file" accept=".xml,text/xml,application/xml" style="display:none" />
-          <input type="file" id="docx-file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none" />
+          <input type="file" id="csv-file" accept=".csv,text/csv" class="visually-hidden-file" />
+          <input type="file" id="ccda-file" accept=".xml,text/xml,application/xml" class="visually-hidden-file" />
+          <input type="file" id="docx-file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" class="visually-hidden-file" />
         </div>
       </div>
       <div id="csv-preview" class="csv-preview" hidden></div>
@@ -591,7 +591,7 @@
       <div class="row">
         <button id="btn-export" class="secondary">Export JSON</button>
         <button id="btn-import" class="secondary">Import JSON</button>
-        <input type="file" id="import-file" accept="application/json" style="display:none" />
+        <input type="file" id="import-file" accept=".json,application/json" class="visually-hidden-file" />
         <button id="btn-clear" class="danger">Clear All Data</button>
       </div>
     </div>

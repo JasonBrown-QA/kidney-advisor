@@ -662,6 +662,17 @@ tbody tr:hover { background: var(--surface-2); }
   to { transform: rotate(360deg); }
 }
 
+/* iOS Safari refuses to fire .click() on display:none file inputs in PWA standalone mode.
+   Render them off-screen but layout-active so the click event propagates. */
+.visually-hidden-file {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 /* ─── Print styles ─────────────────────────────────────── */
 @media print {
   .app-header, .tabs, .no-print-controls .row, .question-status { display: none !important; }
