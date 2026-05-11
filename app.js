@@ -1438,6 +1438,31 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   flash('All data cleared');
 });
 
+document.getElementById('btn-paste-import').addEventListener('click', () => {
+  const text = document.getElementById('paste-import-text').value.trim();
+  if (!text) {
+    alert('Paste the JSON text into the box first.');
+    return;
+  }
+  let incoming;
+  try {
+    incoming = JSON.parse(text);
+  } catch (err) {
+    alert('That doesn’t look like valid JSON: ' + err.message);
+    return;
+  }
+  if (!confirm('Replace all current data with the pasted JSON?')) return;
+  try {
+    state = mergeState(incoming);
+    save();
+    renderAll();
+    document.getElementById('paste-import-text').value = '';
+    flash('Data imported from pasted text');
+  } catch (err) {
+    alert('Import failed while applying the data: ' + err.message);
+  }
+});
+
 // ─── File System Access sync ──────────────────────────────────────────────
 
 const IDB_DB = 'kidney-advisor';

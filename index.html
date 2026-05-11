@@ -590,10 +590,18 @@
       <p>All data is stored locally in your browser. Export regularly.</p>
       <div class="row">
         <button id="btn-export" class="secondary">Export JSON</button>
-        <button id="btn-import" class="secondary">Import JSON</button>
+        <button id="btn-import" class="secondary">Import JSON file</button>
         <input type="file" id="import-file" accept=".json,application/json" class="visually-hidden-file" />
         <button id="btn-clear" class="danger">Clear All Data</button>
       </div>
+      <details style="margin-top:14px">
+        <summary style="cursor:pointer;font-weight:600">Paste JSON instead (no file needed — works on iPhone)</summary>
+        <p class="hint" style="margin-top:8px">Copy the contents of a Kidney Advisor export, paste it here, then tap Import. Useful when you can't get the file onto your phone.</p>
+        <textarea id="paste-import-text" rows="6" placeholder='{"labs":[...],"bp":[...],...}' style="width:100%;font-family:monospace;font-size:12px"></textarea>
+        <div class="row" style="margin-top:8px">
+          <button id="btn-paste-import" class="secondary">Import pasted text</button>
+        </div>
+      </details>
     </div>
 
     <div class="card guidance">
