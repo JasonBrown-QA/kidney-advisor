@@ -1,0 +1,12 @@
+# Medical / PHI — never commit
+jason_medical_import.json
+jason_brown_AmbulatorySummary1_alltime.docx
+kidney-advisor-sync.json
+*-sync.json
+*.local.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

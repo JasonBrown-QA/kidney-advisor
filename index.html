@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Kidney Advisor</title>
+<link rel="stylesheet" href="styles.css" />
+
+<!-- PWA / iOS home-screen app -->
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#0a6c8e" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="Kidney Advisor" />
+<link rel="apple-touch-icon" href="icon-180.png" />
+<link rel="icon" type="image/svg+xml" href="icon.svg" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+</head>
+<body>
+<header class="app-header">
+  <div class="brand" id="brand-home" role="button" tabindex="0" title="Back to Dashboard">
+    <h1>Kidney Advisor</h1>
+    <span class="subtitle"></span>
+  </div>
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-view="diet">Dashboard</button>
+    <button class="tab" data-view="labs">Labs</button>
+    <button class="tab" data-view="bp">Blood Pressure</button>
+    <button class="tab" data-view="meds">Medications</button>
+    <button class="tab" data-view="symptoms">Symptoms</button>
+    <button class="tab" data-view="visit">Visit Prep</button>
+    <button class="tab" data-view="advisor">Ask Advisor</button>
+    <button class="tab" data-view="settings">Settings</button>
+  </nav>
+</header>
+
+<main id="main">
+
+  <!-- DASHBOARD -->
+  <section class="view" id="view-dashboard">
+    <div id="alerts-panel" class="alerts-panel" hidden></div>
+
+    <div class="grid">
+      <div class="card kpi" id="kpi-egfr">
+        <div class="kpi-label">Latest eGFR</div>
+        <div class="kpi-value" id="kpi-egfr-value">—</div>
+        <div class="kpi-meta" id="kpi-egfr-meta">No labs entered</div>
+      </div>
+      <div class="card kpi" id="kpi-bp">
+        <div class="kpi-label">Latest BP</div>
+        <div class="kpi-value" id="kpi-bp-value">—</div>
+        <div class="kpi-meta" id="kpi-bp-meta">7-day avg: —</div>
+      </div>
+      <div class="card kpi" id="kpi-creat">
+        <div class="kpi-label">Creatinine</div>
+        <div class="kpi-value" id="kpi-creat-value">—</div>
+        <div class="kpi-meta" id="kpi-creat-meta">mg/dL</div>
+      </div>
+      <div class="card kpi" id="kpi-k">
+        <div class="kpi-label">Potassium</div>
+        <div class="kpi-value" id="kpi-k-value">—</div>
+        <div class="kpi-meta" id="kpi-k-meta">mEq/L</div>
+      </div>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Today's Diet</h3>
+        <div class="diet-bars" id="dash-diet-bars"></div>
+      </div>
+      <div class="card">
+        <h3>eGFR Trend</h3>
+        <div class="chart-wrap"><canvas id="dash-egfr-chart"></canvas></div>
+      </div>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Recent Symptoms</h3>
+        <div id="dash-symptoms">No symptoms logged.</div>
+      </div>
+      <div class="card">
+        <h3>Today's Medications</h3>
+        <div id="dash-meds">No medications configured.</div>
+      </div>
+    </div>
+
+    <div class="card guidance">
+      <h3>Stage 3 Quick Reference</h3>
+      <ul>
+        <li><strong>Stage 3a:</strong> eGFR 45–59 mL/min/1.73m² · <strong>Stage 3b:</strong> 30–44</li>
+        <li><strong>BP target:</strong> typically &lt;130/80 (confirm with your nephrologist)</li>
+        <li><strong>Sodium:</strong> often &lt;2,300 mg/day · <strong>Protein:</strong> 0.6–0.8 g/kg/day</li>
+        <li><strong>Watch:</strong> NSAIDs, contrast dye, dehydration, untreated UTIs</li>
+      </ul>
+      <p class="disclaimer">Educational reference only — not medical advice.</p>
+    </div>
+  </section>
+
+  <!-- LABS -->
+  <section class="view" id="view-labs">
+    <div class="card">
+      <h3>Add Lab Result</h3>
+      <form id="lab-form" class="form-grid">
+        <label>Date <input type="date" name="date" required /></label>
+        <label>eGFR <input type="number" step="0.1" name="egfr" placeholder="mL/min/1.73m²" /></label>
+        <label>Creatinine <input type="number" step="0.01" name="creatinine" placeholder="mg/dL" /></label>
+        <label>BUN <input type="number" step="0.1" name="bun" placeholder="mg/dL" /></label>
+        <label>Potassium (K) <input type="number" step="0.1" name="potassium" placeholder="mEq/L" /></label>
+        <label>Phosphorus <input type="number" step="0.1" name="phosphorus" placeholder="mg/dL" /></label>
+        <label>Calcium <input type="number" step="0.1" name="calcium" placeholder="mg/dL" /></label>
+        <label>Hemoglobin <input type="number" step="0.1" name="hemoglobin" placeholder="g/dL" /></label>
+        <label>Albumin <input type="number" step="0.1" name="albumin" placeholder="g/dL" /></label>
+        <label>Bicarbonate (CO₂) <input type="number" step="0.1" name="bicarbonate" placeholder="mEq/L" /></label>
+        <label>UACR <input type="number" step="0.1" name="uacr" placeholder="mg/g" /></label>
+        <label class="full">Notes <input type="text" name="notes" placeholder="optional" /></label>
+        <button type="submit" class="primary full">Save Lab</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="card-row">
+        <h3 style="margin:0">Import / Export</h3>
+        <div class="row">
+          <button id="btn-csv-import" class="secondary">Import Lab CSV</button>
+          <button id="btn-ccda-import" class="secondary">Import CCDA XML</button>
+          <button id="btn-docx-import" class="secondary">Import Word (.docx)</button>
+          <button id="btn-csv-export" class="secondary">Export Labs CSV</button>
+          <input type="file" id="csv-file" accept=".csv,text/csv" style="display:none" />
+          <input type="file" id="ccda-file" accept=".xml,text/xml,application/xml" style="display:none" />
+          <input type="file" id="docx-file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none" />
+        </div>
+      </div>
+      <div id="csv-preview" class="csv-preview" hidden></div>
+      <div id="ccda-preview" class="csv-preview" hidden></div>
+      <div id="docx-preview" class="csv-preview" hidden></div>
+      <p class="hint"><strong>CSV:</strong> any spreadsheet with a date column plus eGFR / creatinine / K / P / Ca / Hgb / albumin / bicarbonate / UACR. Auto-detects column names.<br>
+      <strong>CCDA XML:</strong> the standard medical records format. Download from your patient portal (athenahealth: <em>Health Records → Export</em> or similar) and import here. Extracts labs by LOINC code — no credentials needed.<br>
+      <strong>Word (.docx):</strong> upload a Word document with lab results in any format — typed notes, copied portal text, or formatted reports. Uses Gemini (your Google API key from Settings) to extract values. Free on the Gemini free tier.</p>
+    </div>
+
+    <div class="card">
+      <h3>Lab History</h3>
+      <div class="table-wrap">
+        <table id="labs-table">
+          <thead>
+            <tr><th>Date</th><th>eGFR</th><th>Creat</th><th>K</th><th>P</th><th>Ca</th><th>Hgb</th><th>Alb</th><th>HCO₃</th><th>UACR</th><th>BUN</th><th></th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="card"><h3>eGFR</h3><div class="chart-wrap"><canvas id="chart-egfr"></canvas></div></div>
+      <div class="card"><h3>Creatinine</h3><div class="chart-wrap"><canvas id="chart-creat"></canvas></div></div>
+      <div class="card"><h3>Potassium</h3><div class="chart-wrap"><canvas id="chart-k"></canvas></div></div>
+      <div class="card"><h3>Phosphorus</h3><div class="chart-wrap"><canvas id="chart-p"></canvas></div></div>
+      <div class="card"><h3>Hemoglobin</h3><div class="chart-wrap"><canvas id="chart-hgb"></canvas></div></div>
+      <div class="card"><h3>UACR</h3><div class="chart-wrap"><canvas id="chart-uacr"></canvas></div></div>
+    </div>
+  </section>
+
+  <!-- BLOOD PRESSURE -->
+  <section class="view" id="view-bp">
+    <div class="card">
+      <h3>Log Blood Pressure</h3>
+      <form id="bp-form" class="form-grid">
+        <label>Date/Time <input type="datetime-local" name="datetime" required /></label>
+        <label>Systolic <input type="number" name="systolic" required placeholder="mmHg" /></label>
+        <label>Diastolic <input type="number" name="diastolic" required placeholder="mmHg" /></label>
+        <label>Pulse <input type="number" name="pulse" placeholder="bpm" /></label>
+        <label>Position
+          <select name="position">
+            <option value="seated">Seated</option>
+            <option value="standing">Standing</option>
+            <option value="supine">Supine</option>
+          </select>
+        </label>
+        <label class="full">Notes <input type="text" name="notes" placeholder="e.g., before meds" /></label>
+        <button type="submit" class="primary full">Save Reading</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>BP Trend</h3>
+      <div class="chart-wrap"><canvas id="chart-bp"></canvas></div>
+      <div class="bp-stats" id="bp-stats"></div>
+    </div>
+
+    <div class="card">
+      <h3>Readings</h3>
+      <div class="table-wrap">
+        <table id="bp-table">
+          <thead><tr><th>When</th><th>Sys</th><th>Dia</th><th>Pulse</th><th>Position</th><th>Notes</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- MEDICATIONS -->
+  <section class="view" id="view-meds">
+    <div class="card">
+      <h3>Add Medication</h3>
+      <form id="med-form" class="form-grid">
+        <label>Name <input type="text" name="name" required placeholder="e.g., Lisinopril" /></label>
+        <label>Dose <input type="text" name="dose" placeholder="e.g., 10 mg" /></label>
+        <label>Frequency
+          <select name="frequency">
+            <option value="daily">Daily</option>
+            <option value="bid">Twice daily (BID)</option>
+            <option value="tid">Three times daily (TID)</option>
+            <option value="qid">Four times daily (QID)</option>
+            <option value="weekly">Weekly</option>
+            <option value="prn">As needed (PRN)</option>
+          </select>
+        </label>
+        <label>Reminder time(s) <input type="text" name="time" placeholder="e.g., 08:00, 20:00" /></label>
+        <label>Reason <input type="text" name="reason" placeholder="e.g., BP control" /></label>
+        <label>Refill date <input type="date" name="refill" /></label>
+        <button type="submit" class="primary full">Add Medication</button>
+      </form>
+      <p class="hint">Reminder times use 24-hour format (e.g., <code>08:00</code> or <code>08:00, 20:00</code>). Notifications fire only while the app is open.</p>
+    </div>
+
+    <div class="card">
+      <h3>Today's Adherence</h3>
+      <div id="med-checklist"></div>
+    </div>
+
+    <div class="card">
+      <h3>Medication List</h3>
+      <div class="table-wrap">
+        <table id="meds-table">
+          <thead><tr><th>Name</th><th>Dose</th><th>Frequency</th><th>Reminders</th><th>Reason</th><th>Refill</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- DIET -->
+  <section class="view active" id="view-diet">
+    <div class="card">
+      <h3>Today's Totals</h3>
+      <div class="diet-bars" id="diet-bars"></div>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Quick Water Log</h3>
+        <div class="row" style="flex-wrap:wrap;gap:8px">
+          <button class="secondary" data-water="8">+8 oz</button>
+          <button class="secondary" data-water="12">+12 oz</button>
+          <button class="secondary" data-water="16">+16 oz</button>
+          <button class="secondary" data-water="20">+20 oz</button>
+          <button class="secondary" data-water="24">+24 oz</button>
+          <button class="secondary" data-water="32">+32 oz</button>
+        </div>
+        <form id="water-custom-form" class="row" style="gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap">
+          <label style="margin:0">Custom
+            <input type="number" id="water-custom-oz" step="0.5" min="0.5" placeholder="e.g., 14" style="width:90px;margin-left:6px" />
+            oz
+          </label>
+          <button type="submit" class="primary">Add Water</button>
+        </form>
+        <p class="hint">Counts toward your fluid target.</p>
+      </div>
+
+      <div class="card">
+        <h3>Quick Blood Pressure Log</h3>
+        <form id="bp-quick-form" class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+          <label style="margin:0">Sys
+            <input type="number" name="systolic" required placeholder="120" style="width:80px;margin-left:6px" />
+          </label>
+          <label style="margin:0">Dia
+            <input type="number" name="diastolic" required placeholder="80" style="width:80px;margin-left:6px" />
+          </label>
+          <label style="margin:0">Pulse
+            <input type="number" name="pulse" placeholder="72" style="width:80px;margin-left:6px" />
+          </label>
+          <button type="submit" class="primary">Log BP</button>
+        </form>
+        <p class="hint" style="margin-top:8px"><span id="bp-quick-last"></span></p>
+        <p class="hint">Open the Blood Pressure tab for trend chart + edit/delete.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-row">
+        <h3 style="margin:0">Search USDA Food Database</h3>
+        <input type="search" id="usda-search" placeholder="Search any food (mcdonalds hamburger, starbucks latte, chipotle bowl…)" style="flex:1;min-width:240px" />
+      </div>
+      <p class="hint">Searches 600,000+ foods including branded/restaurant items. Click a result to add it to today's diet with full macros.</p>
+      <div id="usda-results" class="food-results"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-row">
+        <h3 style="margin:0">Quick Add from Local CKD Database</h3>
+        <input type="search" id="food-search" placeholder="Search basic foods (apple, chicken, milk…)" />
+      </div>
+      <p class="hint">~95 curated CKD-relevant items with Na/K/P data, available offline.</p>
+      <div id="food-results" class="food-results"></div>
+    </div>
+
+    <div class="card">
+      <h3>Custom Entry</h3>
+      <form id="diet-form" class="form-grid">
+        <label>Date <input type="date" name="date" required /></label>
+        <label>Item <input type="text" name="item" required placeholder="e.g., banana" /></label>
+        <label>Meal
+          <select name="meal">
+            <option value="">—</option>
+            <option value="breakfast">Breakfast</option>
+            <option value="lunch">Lunch</option>
+            <option value="dinner">Dinner</option>
+            <option value="snack">Snack</option>
+          </select>
+        </label>
+        <label>Servings <input type="number" step="0.25" name="servings" value="1" /></label>
+        <label>Calories <input type="number" step="1" name="calories" /></label>
+        <label>Carbs (g) <input type="number" step="0.1" name="carbs" /></label>
+        <label>Fat (g) <input type="number" step="0.1" name="fat" /></label>
+        <label>Fiber (g) <input type="number" step="0.1" name="fiber" /></label>
+        <label>Protein (g) <input type="number" step="0.1" name="protein" /></label>
+        <label>Sodium (mg) <input type="number" step="1" name="sodium" /></label>
+        <label>Potassium (mg) <input type="number" step="1" name="potassium" /></label>
+        <label>Phosphorus (mg) <input type="number" step="1" name="phosphorus" /></label>
+        <label>Fluids (oz) <input type="number" step="0.5" name="fluids" /></label>
+        <button type="submit" class="primary full">Add Entry</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Today's Entries</h3>
+      <div class="table-wrap">
+        <table id="diet-table">
+          <thead><tr><th>Item</th><th>Meal</th><th>Serv</th><th>Cal</th><th>Carb (g)</th><th>Fat (g)</th><th>Fiber (g)</th><th>Protein (g)</th><th>Na (mg)</th><th>K (mg)</th><th>P (mg)</th><th>Fluids (oz)</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card guidance">
+      <h3>CKD Diet Quick Tips</h3>
+      <ul>
+        <li><strong>Lower-K swaps:</strong> apple instead of banana, white rice instead of brown, cauliflower instead of potato</li>
+        <li><strong>Lower-P swaps:</strong> rice/almond milk instead of dairy; avoid cola, processed cheese, deli meat</li>
+        <li><strong>Lower-Na:</strong> cook from scratch, rinse canned veg, skip table salt</li>
+        <li><strong>Watch:</strong> hidden phosphate additives (any "PHOS" on the ingredient list)</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- SYMPTOMS -->
+  <section class="view" id="view-symptoms">
+    <div class="card">
+      <h3>Log Symptoms</h3>
+      <form id="symptom-form" class="form-grid">
+        <label>Date <input type="date" name="date" required /></label>
+        <label>Fatigue (0–10) <input type="number" min="0" max="10" name="fatigue" /></label>
+        <label>Swelling <select name="swelling">
+          <option value="">None</option>
+          <option value="ankles">Ankles</option>
+          <option value="legs">Legs</option>
+          <option value="hands">Hands</option>
+          <option value="face">Face</option>
+          <option value="multiple">Multiple</option>
+        </select></label>
+        <label>Nausea (0–10) <input type="number" min="0" max="10" name="nausea" /></label>
+        <label>Itch (0–10) <input type="number" min="0" max="10" name="itch" /></label>
+        <label>Sleep quality (0–10) <input type="number" min="0" max="10" name="sleep" /></label>
+        <label>Mood (0–10) <input type="number" min="0" max="10" name="mood" /></label>
+        <label>Weight (lbs) <input type="number" step="0.1" name="weight" /></label>
+        <label class="full">Notes <input type="text" name="notes" /></label>
+        <button type="submit" class="primary full">Save Entry</button>
+      </form>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="card"><h3>Symptom Trend</h3><div class="chart-wrap"><canvas id="chart-symptoms"></canvas></div></div>
+      <div class="card"><h3>Weight Trend</h3><div class="chart-wrap"><canvas id="chart-weight"></canvas></div></div>
+    </div>
+
+    <div class="card">
+      <h3>History</h3>
+      <div class="table-wrap">
+        <table id="symptoms-table">
+          <thead><tr><th>Date</th><th>Fatigue</th><th>Swelling</th><th>Nausea</th><th>Itch</th><th>Sleep</th><th>Mood</th><th>Weight</th><th>Notes</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- VISIT PREP -->
+  <section class="view" id="view-visit">
+    <div class="card">
+      <h3>Next Appointment</h3>
+      <form id="visit-form" class="form-grid">
+        <label>Date <input type="date" name="date" /></label>
+        <label>Provider <input type="text" name="provider" placeholder="Dr. ____" /></label>
+        <label class="full">Pre-visit notes <input type="text" name="notes" placeholder="What's on your mind?" /></label>
+        <button type="submit" class="primary full">Save Appointment Info</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Add Question</h3>
+      <form id="question-form" class="form-grid">
+        <label>Category
+          <select name="cat">
+            <option>Labs</option><option>Meds</option><option>Diet</option>
+            <option>BP</option><option>Symptoms</option><option>Lifestyle</option>
+            <option>Planning</option><option>Other</option>
+          </select>
+        </label>
+        <label class="full">Question <input type="text" name="text" required placeholder="e.g., Is my potassium trending up?" /></label>
+        <button type="submit" class="primary full">Add</button>
+      </form>
+      <div class="quick-add" id="question-templates">
+        <span class="quick-label">Common questions:</span>
+      </div>
+    </div>
+
+    <div class="card no-print-controls">
+      <div class="card-row">
+        <h3 style="margin:0">Question List</h3>
+        <div class="row">
+          <button id="btn-print-visit" class="secondary">Print / PDF</button>
+          <button id="btn-clear-answered" class="secondary">Clear answered</button>
+        </div>
+      </div>
+      <div id="question-list"></div>
+    </div>
+
+    <div class="card no-print-controls">
+      <h3>Past Visit Summary (auto-generated)</h3>
+      <div id="visit-summary"></div>
+    </div>
+  </section>
+
+  <!-- ASK ADVISOR -->
+  <section class="view" id="view-advisor">
+    <div class="card guidance">
+      <h3>Ask Advisor — Powered by Google Gemini</h3>
+      <p>Get personalized CKD guidance by asking any health, diet, lifestyle, or medication question. The advisor draws from established sources (NKF, NIDDK, CDC, Mayo Clinic, KDIGO) and uses your latest labs, BP, meds, and diet data.</p>
+      <p class="disclaimer"><strong>Privacy:</strong> Your question and the personal-context summary are sent to Google's Gemini API. Google does not use AI Studio / Gemini API data for model training on the paid tier; free-tier data may be used to improve models — check current Google terms. Your API key stays on this device.</p>
+      <p class="disclaimer"><strong>Not medical advice.</strong> The advisor provides educational information. For decisions about treatment, medication changes, or urgent symptoms, consult your nephrologist or primary care physician — or call 911 / go to the ER for emergencies.</p>
+    </div>
+
+    <div class="card">
+      <h3>Export briefing (optional)</h3>
+      <p>For occasional use with another chatbot (ChatGPT Enterprise, Claude, etc.), or to share with your care team: one click builds a complete briefing — the CKD advisor system prompt plus your current labs, BP, meds, and trends — that you can paste anywhere.</p>
+      <div class="row">
+        <button id="btn-copy-briefing" class="secondary">Copy briefing to clipboard</button>
+        <button id="btn-download-briefing" class="secondary">Download as .txt</button>
+        <button id="btn-preview-briefing" class="secondary">Preview</button>
+      </div>
+      <div id="briefing-preview" class="csv-preview" hidden></div>
+    </div>
+
+
+    <div class="card" id="advisor-no-key" hidden>
+      <h3>Set Up Your Free Gemini API Key</h3>
+      <p>The Ask Advisor uses Google's Gemini API. The free tier covers ~250 questions per day — no credit card required.</p>
+      <ol>
+        <li>Go to <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a> and sign in with any Google account</li>
+        <li>Click <strong>Create API key</strong></li>
+        <li>Copy the key (starts with <code>AIza...</code>)</li>
+        <li>Paste it in the <strong>Settings tab</strong> of this app under "Ask Advisor"</li>
+      </ol>
+      <p class="hint">Your key is stored in your browser's localStorage on this device only — not synced to OneDrive.</p>
+    </div>
+
+    <div class="card" id="advisor-chat-card">
+      <div class="card-row">
+        <h3 style="margin:0">Conversation</h3>
+        <div class="row">
+          <label class="inline-toggle">
+            <input type="checkbox" id="advisor-include-data" checked />
+            Include my data
+          </label>
+          <button id="btn-advisor-clear" class="secondary">New Conversation</button>
+        </div>
+      </div>
+      <div id="advisor-context-preview" class="context-preview" hidden></div>
+      <div id="advisor-messages" class="advisor-messages"></div>
+      <form id="advisor-form" class="advisor-input-row">
+        <textarea id="advisor-input" placeholder="Ask anything about your CKD: diet, exercise, meds, symptoms, lab values..." rows="3" required></textarea>
+        <button type="submit" class="primary" id="btn-advisor-send">Send</button>
+      </form>
+      <div id="advisor-status" class="hint"></div>
+    </div>
+
+    <div class="card">
+      <h3>Suggested Questions</h3>
+      <div class="quick-add" id="advisor-suggestions">
+        <span class="quick-label">Try asking:</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section class="view" id="view-settings">
+    <div class="card">
+      <h3>Personal Targets</h3>
+      <form id="settings-form" class="form-grid">
+        <label>Weight (lbs) for protein calc <input type="number" name="weightLbs" step="0.1" /></label>
+        <label>Daily calorie target (kcal) <input type="number" name="caloriesTarget" /></label>
+        <label>Daily carbs target (g) <input type="number" name="carbsTarget" /></label>
+        <label>Daily fat target (g) <input type="number" name="fatTarget" /></label>
+        <label>Daily fiber target (g) <input type="number" name="fiberTarget" /></label>
+        <label>Daily protein target (g) <input type="number" step="0.1" name="proteinTarget" /></label>
+        <label>Daily fluid target (oz) <input type="number" step="0.5" name="fluidTarget" /></label>
+        <label>Daily sodium target (mg) <input type="number" name="sodiumTarget" /></label>
+        <label>Daily potassium target (mg) <input type="number" name="potassiumTarget" /></label>
+        <label>Daily phosphorus target (mg) <input type="number" name="phosphorusTarget" /></label>
+        <label>BP target systolic <input type="number" name="bpSys" /></label>
+        <label>BP target diastolic <input type="number" name="bpDia" /></label>
+        <button type="submit" class="primary full">Save Targets</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Reminders</h3>
+      <form id="reminders-form" class="form-grid">
+        <label>BP reminder time(s) <input type="text" name="bpTime" placeholder="e.g., 08:00, 18:00" /></label>
+        <label>Daily check-in <input type="text" name="checkinTime" placeholder="e.g., 21:00" /></label>
+        <label class="full">
+          <input type="checkbox" name="enabled" /> Enable browser notifications
+        </label>
+        <button type="submit" class="primary full">Save Reminders</button>
+      </form>
+      <div id="notification-status" class="hint"></div>
+      <p class="hint">Notifications work only while this tab is open. Pin it for best results. Times use 24-hour format.</p>
+    </div>
+
+    <div class="card">
+      <h3>Ask Advisor (Google Gemini API)</h3>
+      <form id="advisor-settings-form" class="form-grid">
+        <label class="full">Google Gemini API Key
+          <input type="password" name="apiKey" placeholder="AIza..." autocomplete="off" />
+        </label>
+        <label>Model
+          <select name="model">
+            <option value="gemini-2.5-flash">Gemini 2.5 Flash (balanced — recommended, free tier)</option>
+            <option value="gemini-2.5-pro">Gemini 2.5 Pro (highest quality, smaller free tier)</option>
+            <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite (fastest, cheapest)</option>
+            <option value="gemini-2.0-flash">Gemini 2.0 Flash (legacy, free tier)</option>
+          </select>
+        </label>
+        <label>Max response tokens <input type="number" name="maxTokens" value="2048" min="256" max="8192" /></label>
+        <button type="submit" class="primary full">Save Advisor Settings</button>
+      </form>
+      <div id="advisor-usage" class="hint"></div>
+      <p class="hint">Get a free API key at <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a> — no credit card required for the free tier (10 req/min, 250/day on Flash). Your key is stored only in this browser's localStorage on this device — it is <strong>not</strong> written to the OneDrive sync file.</p>
+    </div>
+
+    <div class="card">
+      <h3>USDA Food Database (optional)</h3>
+      <p>The Diet tab's "Search USDA Food Database" works out-of-the-box using a shared demo key (rate-limited to ~30 searches per hour). If you hit rate limits, get your own free key — 1,000 requests/hour, no card needed.</p>
+      <form id="usda-key-form" class="form-grid">
+        <label class="full">USDA API Key
+          <input type="password" name="usdaKey" placeholder="Leave blank to use shared demo key" autocomplete="off" />
+        </label>
+        <button type="submit" class="primary full">Save USDA Key</button>
+      </form>
+      <p class="hint">Sign up free at <a href="https://fdc.nal.usda.gov/api-key-signup.html" target="_blank">fdc.nal.usda.gov/api-key-signup.html</a> — takes 30 seconds, key arrives via email.</p>
+    </div>
+
+    <div class="card">
+      <h3>OneDrive Sync</h3>
+      <p>Pick a JSON file in your OneDrive folder. The app will auto-write to it on every change, and your data will sync across devices via OneDrive.</p>
+      <div class="row">
+        <button id="btn-sync-pick" class="secondary">Pick / Create Sync File</button>
+        <button id="btn-sync-load" class="secondary">Load From Sync File</button>
+        <button id="btn-sync-clear" class="secondary">Disconnect Sync</button>
+      </div>
+      <div id="sync-status" class="hint"></div>
+      <p class="hint" id="fsa-warning" hidden>Your browser doesn't support direct file sync (File System Access API). Use Edge or Chrome, or fall back to manual JSON export/import below.</p>
+    </div>
+
+    <div class="card">
+      <h3>Backup &amp; Restore</h3>
+      <p>All data is stored locally in your browser. Export regularly.</p>
+      <div class="row">
+        <button id="btn-export" class="secondary">Export JSON</button>
+        <button id="btn-import" class="secondary">Import JSON</button>
+        <input type="file" id="import-file" accept="application/json" style="display:none" />
+        <button id="btn-clear" class="danger">Clear All Data</button>
+      </div>
+    </div>
+
+    <div class="card guidance">
+      <h3>About</h3>
+      <p>Kidney Advisor is a personal self-management tool for chronic kidney disease stage 3. It does not transmit your data anywhere — everything stays in your browser's local storage on this device, plus any sync file you opt-in to.</p>
+      <p class="disclaimer"><strong>Not medical advice.</strong> Use alongside, not instead of, care from your nephrologist and primary physician. Always confirm targets and medication changes with your care team.</p>
+    </div>
+  </section>
+
+</main>
+
+<script src="foods.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

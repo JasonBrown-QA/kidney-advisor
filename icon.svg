@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#0a6c8e"/>
+  <!-- Stylized kidney shape -->
+  <path fill="#ffffff" d="M192 128c-44 0-80 36-80 80v96c0 80 48 144 144 144s144-64 144-144v-96c0-44-36-80-80-80h-128zm64 88c40 0 72 32 72 72s-32 72-72 72-72-32-72-72 32-72 72-72z" opacity="0.95"/>
+  <circle cx="256" cy="288" r="36" fill="#0a6c8e"/>
+</svg>
