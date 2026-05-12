@@ -1,16 +1,13 @@
 // Kidney Advisor — local-first CKD stage 3 tracker
 // All data lives in localStorage + an optional sync file. No telemetry.
 
-// Register service worker so iOS Safari / PWA pick up new code on every load
-// via a network-first strategy. We do NOT auto-reload on controllerchange —
-// that pattern races with in-flight sync requests and aborts them. The
-// network-first SW already serves fresh code on the next fetch / page load.
+// Actively unregister any previously-installed service worker. The earlier
+// SW caused intermittent "Failed to fetch" during cloud sync. version.json
+// polling handles update propagation without it.
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch((err) =>
-      console.warn('SW registration failed', err)
-    );
-  });
+  navigator.serviceWorker.getRegistrations().then((regs) => {
+    regs.forEach((reg) => reg.unregister().catch(() => {}));
+  }).catch(() => {});
 }
 
 const STORAGE_KEY = 'kidney-advisor-v1';

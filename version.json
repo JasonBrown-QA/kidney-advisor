@@ -1,4 +1,4 @@
 {
-  "build": "20260512-1100",
-  "summary": "SW no longer auto-reloads — fixes sync race"
+  "build": "20260512-1130",
+  "summary": "service worker disabled — cloud sync restored"
 }
