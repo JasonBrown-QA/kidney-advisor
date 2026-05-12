@@ -2873,7 +2873,10 @@ async function ghFetch(path, opts = {}) {
       'Authorization': 'Bearer ' + pat,
       'Accept': 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
-      'Cache-Control': 'no-cache',
+      // Do NOT add Cache-Control here — GitHub API CORS doesn't whitelist
+      // it, so the preflight rejects the request with "Failed to fetch"
+      // before it ever leaves the browser. cache:'no-store' above is the
+      // browser-side cache control we need.
       ...(opts.body ? { 'Content-Type': 'application/json' } : {}),
       ...(opts.headers || {}),
     },

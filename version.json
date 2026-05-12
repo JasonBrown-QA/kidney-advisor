@@ -1,4 +1,4 @@
 {
-  "build": "20260512-1130",
-  "summary": "service worker disabled — cloud sync restored"
+  "build": "20260512-1145",
+  "summary": "Cache-Control header removed from ghFetch — CORS preflight fix"
 }
