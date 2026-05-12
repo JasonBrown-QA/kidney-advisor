@@ -2638,6 +2638,22 @@ async function init() {
       setCloudStatus('Auto-pull failed: ' + err.message);
     });
   }
+
+  // Refetch when the app becomes visible again (user switching back to the
+  // PWA from another app, or unlocking the phone). Throttled so we don't
+  // spam GitHub if the user is rapidly switching tabs.
+  let lastVisibilityPull = 0;
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (!cloudGetPat()) return;
+    const now = Date.now();
+    if (now - lastVisibilityPull < 30 * 1000) return;
+    lastVisibilityPull = now;
+    cloudPullIfNewer({ prompt: true }).catch(err => {
+      console.warn('Visibility pull failed', err);
+      setCloudStatus('Auto-pull failed: ' + err.message);
+    });
+  });
 }
 
 // Pull-to-refresh — iOS standalone PWAs don't get the native gesture, so we
@@ -2793,12 +2809,20 @@ function cloudGetGistId() { return localStorage.getItem(GIST_ID_KEY) || ''; }
 async function ghFetch(path, opts = {}) {
   const pat = cloudGetPat();
   if (!pat) throw new Error('No GitHub token saved');
-  const res = await fetch('https://api.github.com' + path, {
+  // Cache-bust by appending a timestamp param for GETs, and explicitly tell
+  // the browser not to cache GitHub API responses (Safari can otherwise
+  // serve a stale gist payload when the same URL is hit twice in a session).
+  const method = (opts.method || 'GET').toUpperCase();
+  const url = 'https://api.github.com' + path +
+    (method === 'GET' ? (path.includes('?') ? '&' : '?') + '_t=' + Date.now() : '');
+  const res = await fetch(url, {
     ...opts,
+    cache: 'no-store',
     headers: {
       'Authorization': 'Bearer ' + pat,
       'Accept': 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
+      'Cache-Control': 'no-cache',
       ...(opts.body ? { 'Content-Type': 'application/json' } : {}),
       ...(opts.headers || {}),
     },
