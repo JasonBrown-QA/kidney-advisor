@@ -1,4 +1,4 @@
 {
-  "build": "20260512-0900",
-  "summary": "version-check auto-update + cache-control meta"
+  "build": "20260512-0945",
+  "summary": "meta cache-control removed — F5 reload fix"
 }
