@@ -1,4 +1,4 @@
 {
-  "build": "20260512-1015",
-  "summary": "service worker — automatic updates on iOS Safari + PWA"
+  "build": "20260512-1100",
+  "summary": "SW no longer auto-reloads — fixes sync race"
 }

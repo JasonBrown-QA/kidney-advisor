@@ -2,28 +2,14 @@
 // All data lives in localStorage + an optional sync file. No telemetry.
 
 // Register service worker so iOS Safari / PWA pick up new code on every load
-// via a network-first strategy. Done at the top of app.js (not inside init)
-// so it kicks in as early as possible.
+// via a network-first strategy. We do NOT auto-reload on controllerchange —
+// that pattern races with in-flight sync requests and aborts them. The
+// network-first SW already serves fresh code on the next fetch / page load.
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').then((reg) => {
-      // When a new SW is found, tell it to activate immediately.
-      reg.addEventListener('updatefound', () => {
-        const sw = reg.installing;
-        if (sw) sw.addEventListener('statechange', () => {
-          if (sw.state === 'installed' && navigator.serviceWorker.controller) {
-            sw.postMessage('SKIP_WAITING');
-          }
-        });
-      });
-    }).catch((err) => console.warn('SW registration failed', err));
-    // Reload once when a new SW takes control, so the page picks up new code.
-    let reloaded = false;
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (reloaded) return;
-      reloaded = true;
-      window.location.reload();
-    });
+    navigator.serviceWorker.register('./sw.js').catch((err) =>
+      console.warn('SW registration failed', err)
+    );
   });
 }
 
