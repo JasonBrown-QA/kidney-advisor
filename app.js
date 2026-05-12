@@ -1,6 +1,32 @@
 // Kidney Advisor — local-first CKD stage 3 tracker
 // All data lives in localStorage + an optional sync file. No telemetry.
 
+// Register service worker so iOS Safari / PWA pick up new code on every load
+// via a network-first strategy. Done at the top of app.js (not inside init)
+// so it kicks in as early as possible.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').then((reg) => {
+      // When a new SW is found, tell it to activate immediately.
+      reg.addEventListener('updatefound', () => {
+        const sw = reg.installing;
+        if (sw) sw.addEventListener('statechange', () => {
+          if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+            sw.postMessage('SKIP_WAITING');
+          }
+        });
+      });
+    }).catch((err) => console.warn('SW registration failed', err));
+    // Reload once when a new SW takes control, so the page picks up new code.
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloaded) return;
+      reloaded = true;
+      window.location.reload();
+    });
+  });
+}
+
 const STORAGE_KEY = 'kidney-advisor-v1';
 const FIRED_KEY = 'kidney-advisor-fired';
 const ADVISOR_SECRET_KEY = 'kidney-advisor-secret';

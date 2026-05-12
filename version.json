@@ -1,4 +1,4 @@
 {
-  "build": "20260512-0945",
-  "summary": "meta cache-control removed — F5 reload fix"
+  "build": "20260512-1015",
+  "summary": "service worker — automatic updates on iOS Safari + PWA"
 }
