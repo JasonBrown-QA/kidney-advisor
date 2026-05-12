@@ -2645,6 +2645,9 @@ async function init() {
   let lastVisibilityPull = 0;
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
+    // Always check for new code first — if there's an update we'll reload
+    // before doing the sync, so the post-reload code does the sync fresh.
+    checkForUpdate();
     if (!cloudGetPat()) return;
     const now = Date.now();
     if (now - lastVisibilityPull < 30 * 1000) return;
@@ -2654,6 +2657,9 @@ async function init() {
       setCloudStatus('Auto-pull failed: ' + err.message);
     });
   });
+
+  // Initial update check after the rest of init has completed.
+  checkForUpdate();
 }
 
 // Pull-to-refresh — iOS standalone PWAs don't get the native gesture, so we
@@ -2790,6 +2796,42 @@ async function gunzipBase64(b64) {
   for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
   return await new Response(stream).text();
+}
+
+// ─── Auto-update via version.json ────────────────────────────────────────
+// Polled on load + every visibility change. When build changes from what's
+// stored in localStorage, navigate to a cache-busted URL so Safari refetches
+// index.html from network instead of serving its cached copy.
+
+const BUILD_KEY = 'kidney-advisor-build';
+let checkingForUpdate = false;
+
+async function checkForUpdate() {
+  if (checkingForUpdate) return;
+  checkingForUpdate = true;
+  try {
+    const res = await fetch('./version.json?t=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) return;
+    const { build } = await res.json();
+    if (!build) return;
+    const stored = localStorage.getItem(BUILD_KEY);
+    if (!stored) {
+      localStorage.setItem(BUILD_KEY, build);
+      return;
+    }
+    if (stored !== build) {
+      console.log('New build detected: ' + stored + ' -> ' + build + ' — reloading');
+      localStorage.setItem(BUILD_KEY, build);
+      // location.reload(true) is deprecated/ignored. Navigate to a versioned
+      // URL so Safari treats it as a new resource and refetches the HTML.
+      const sep = location.search ? '&' : '?';
+      location.replace(location.pathname + location.search + sep + 'v=' + build + location.hash);
+    }
+  } catch (e) {
+    console.warn('Update check failed', e);
+  } finally {
+    checkingForUpdate = false;
+  }
 }
 
 // ─── GitHub Gist cloud sync ──────────────────────────────────────────────
