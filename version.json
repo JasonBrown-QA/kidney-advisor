@@ -1,4 +1,4 @@
 {
-  "build": "20260513-1130",
-  "summary": "Barcode scanner on Dashboard — BarcodeDetector + Open Food Facts lookup"
+  "build": "20260513-1145",
+  "summary": "Fix barcode modal showing on app load — [hidden] now beats display:flex"
 }
