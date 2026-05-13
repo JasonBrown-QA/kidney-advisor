@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Kidney Advisor</title>
-<link rel="stylesheet" href="styles.css?v=20260513-1145" />
+<link rel="stylesheet" href="styles.css?v=20260513-1200" />
 
 <!-- PWA / iOS home-screen app -->
 <link rel="manifest" href="manifest.json" />
@@ -669,7 +669,7 @@
         <button id="btn-cloud-disconnect" class="danger" hidden>Disconnect</button>
       </div>
       <div id="cloud-sync-status" class="hint" style="margin-top:8px"></div>
-      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260513-1145 — Fix barcode modal showing on app load ([hidden] vs display:flex)</span></p>
+      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260513-1200 — Barcode scanner now uses html5-qrcode (works in Safari/iOS)</span></p>
     </div>
 
     <div class="card">
@@ -702,8 +702,7 @@
       <button id="btn-barcode-close" class="icon" aria-label="Close" title="Close">×</button>
     </div>
     <div class="barcode-video-wrap">
-      <video id="barcode-video" playsinline autoplay muted></video>
-      <div class="barcode-target"></div>
+      <div id="barcode-video-container"></div>
     </div>
     <div class="barcode-modal-footer">
       <div id="barcode-status" class="hint">Initializing camera…</div>
@@ -712,6 +711,6 @@
 </div>
 
 <script src="foods.js"></script>
-<script src="app.js?v=20260513-1145"></script>
+<script src="app.js?v=20260513-1200"></script>
 </body>
 </html>

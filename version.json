@@ -1,4 +1,4 @@
 {
-  "build": "20260513-1145",
-  "summary": "Fix barcode modal showing on app load — [hidden] now beats display:flex"
+  "build": "20260513-1200",
+  "summary": "Swap BarcodeDetector for html5-qrcode — works in Safari/iOS"
 }

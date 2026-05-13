@@ -1388,94 +1388,110 @@ if (usdaKeyForm) {
 }
 
 // ─── Barcode scanner + Open Food Facts lookup ─────────────────────────────
+//
+// BarcodeDetector isn't in Safari yet, so we use html5-qrcode (loaded lazily
+// from a CDN on first scan) which works cross-browser via getUserMedia + a
+// pure-JS decoder. Supports UPC/EAN/Code-128/Code-39/QR.
 
-let barcodeStream = null;
-let barcodeDetector = null;
-let barcodeScanLoopId = null;
-let barcodeScanning = false;
-
-const BARCODE_FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf'];
+let html5QrCodeInstance = null;
+let html5QrCodeLoaded = false;
+const HTML5_QRCODE_SRC = 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js';
 
 function setBarcodeStatus(msg) {
   const el = document.getElementById('barcode-status');
   if (el) el.innerHTML = msg;
 }
 
+function loadHtml5QrCode() {
+  if (html5QrCodeLoaded && typeof Html5Qrcode !== 'undefined') return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[src="${HTML5_QRCODE_SRC}"]`);
+    if (existing) {
+      existing.addEventListener('load', () => { html5QrCodeLoaded = true; resolve(); });
+      existing.addEventListener('error', () => reject(new Error('Failed to load scanner library')));
+      return;
+    }
+    const s = document.createElement('script');
+    s.src = HTML5_QRCODE_SRC;
+    s.async = true;
+    s.onload = () => { html5QrCodeLoaded = true; resolve(); };
+    s.onerror = () => reject(new Error('Failed to load scanner library — check your connection'));
+    document.head.appendChild(s);
+  });
+}
+
 async function openBarcodeScanner() {
   const modal = document.getElementById('barcode-scanner-modal');
-  const video = document.getElementById('barcode-video');
-  if (!modal || !video) return;
+  if (!modal) return;
 
-  if (!('BarcodeDetector' in window)) {
-    alert('Live barcode scanning is not supported in this browser. Type the number into the "Or type barcode" field instead.');
-    document.getElementById('barcode-manual-input')?.focus();
-    return;
-  }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     alert('Camera access is not available in this browser. Type the barcode instead.');
     return;
   }
 
   modal.hidden = false;
+  setBarcodeStatus('Loading scanner…');
+
+  try {
+    await loadHtml5QrCode();
+  } catch (err) {
+    setBarcodeStatus(`${escapeHtml(err.message)}. Type the barcode instead.`);
+    return;
+  }
+
   setBarcodeStatus('Requesting camera…');
 
   try {
-    barcodeStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' } },
-      audio: false,
-    });
-    video.srcObject = barcodeStream;
-    await video.play();
+    html5QrCodeInstance = new Html5Qrcode('barcode-video-container', { verbose: false });
+    const config = {
+      fps: 12,
+      qrbox: (w, h) => {
+        const minEdge = Math.min(w, h);
+        return { width: Math.floor(minEdge * 0.85), height: Math.floor(minEdge * 0.45) };
+      },
+      aspectRatio: 1.333,
+      formatsToSupport: typeof Html5QrcodeSupportedFormats !== 'undefined' ? [
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.CODE_128,
+        Html5QrcodeSupportedFormats.CODE_39,
+        Html5QrcodeSupportedFormats.ITF,
+        Html5QrcodeSupportedFormats.QR_CODE,
+      ] : undefined,
+    };
+
+    await html5QrCodeInstance.start(
+      { facingMode: { ideal: 'environment' } },
+      config,
+      (decodedText) => onBarcodeDetected(decodedText),
+      () => { /* per-frame decode failures are expected — ignore */ }
+    );
     setBarcodeStatus('Hold still — point the back camera at the barcode.');
-
-    try {
-      barcodeDetector = new BarcodeDetector({ formats: BARCODE_FORMATS });
-    } catch {
-      barcodeDetector = new BarcodeDetector(); // some browsers reject unknown formats
-    }
-
-    barcodeScanning = true;
-    scheduleBarcodeDetect(video);
   } catch (err) {
-    setBarcodeStatus(`Camera failed: ${escapeHtml(err.message || String(err))}. Type the barcode instead.`);
+    const msg = err && err.message ? err.message : String(err);
+    setBarcodeStatus(`Camera failed: ${escapeHtml(msg)}. Type the barcode instead.`);
   }
 }
 
-function scheduleBarcodeDetect(video) {
-  if (!barcodeScanning) return;
-  barcodeScanLoopId = requestAnimationFrame(async () => {
-    if (!barcodeScanning) return;
+async function closeBarcodeScanner() {
+  if (html5QrCodeInstance) {
     try {
-      const codes = await barcodeDetector.detect(video);
-      if (codes && codes.length) {
-        const value = codes[0].rawValue;
-        if (value) {
-          onBarcodeDetected(value);
-          return;
-        }
+      if (typeof html5QrCodeInstance.isScanning === 'undefined' || html5QrCodeInstance.isScanning) {
+        await html5QrCodeInstance.stop();
       }
-    } catch (e) {
-      // detector occasionally throws on early frames — keep looping
-    }
-    scheduleBarcodeDetect(video);
-  });
-}
-
-function closeBarcodeScanner() {
-  barcodeScanning = false;
-  if (barcodeScanLoopId) { cancelAnimationFrame(barcodeScanLoopId); barcodeScanLoopId = null; }
-  if (barcodeStream) {
-    barcodeStream.getTracks().forEach(t => t.stop());
-    barcodeStream = null;
+      html5QrCodeInstance.clear();
+    } catch (e) { /* already stopped */ }
+    html5QrCodeInstance = null;
   }
   const modal = document.getElementById('barcode-scanner-modal');
   if (modal) modal.hidden = true;
 }
 
-function onBarcodeDetected(code) {
-  closeBarcodeScanner();
+async function onBarcodeDetected(code) {
+  await closeBarcodeScanner();
   flash(`Scanned: ${code}`);
-  // navigator.vibrate is optional; not on iOS but harmless to call
   if (navigator.vibrate) navigator.vibrate(50);
   const manualInput = document.getElementById('barcode-manual-input');
   if (manualInput) manualInput.value = code;
