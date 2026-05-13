@@ -1,4 +1,4 @@
 {
-  "build": "20260513-0930",
-  "summary": "Daily totals midnight reset + history table; Labs reordered; USDA serving dropdown"
+  "build": "20260513-1005",
+  "summary": "todayISO() now uses local date — fixes Today's Totals showing yesterday-evening entries"
 }
