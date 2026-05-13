@@ -1,4 +1,4 @@
 {
-  "build": "20260513-1005",
-  "summary": "todayISO() now uses local date — fixes Today's Totals showing yesterday-evening entries"
+  "build": "20260513-1025",
+  "summary": "Auto-retrodate UTC-stamped diet entries to their local creation day"
 }

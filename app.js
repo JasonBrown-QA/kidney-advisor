@@ -103,6 +103,48 @@ const todayISO = () => {
   return `${y}-${m}-${day}`;
 };
 
+// Decode the creation timestamp embedded in a uid() id (base36 of Date.now()).
+// uid() format: base36(Date.now()) + 6 random base36 chars. Returns null if
+// the parsed timestamp looks implausible.
+function decodeUidCreated(id) {
+  if (!id || typeof id !== 'string' || id.length <= 6) return null;
+  const tsPart = id.slice(0, id.length - 6);
+  const ms = parseInt(tsPart, 36);
+  if (!Number.isFinite(ms) || ms < 1.5e12 || ms > Date.now() + 86400000) return null;
+  return new Date(ms);
+}
+
+function localDateString(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Idempotent migration: retro-correct diet entries that were stamped with the
+// UTC date instead of the local date at creation. Pre-fix, `todayISO()`
+// returned UTC, so anything logged after the UTC rollover (5 PM Phoenix)
+// landed on the next day's totals. Safe because the criterion is strict:
+// stored `date` must equal UTC-at-creation AND UTC must differ from local at
+// creation. After re-dating, d.date == local, so the predicate no longer
+// matches — re-running is a no-op. Run on every init + cloud pull so cloud
+// data is also normalized.
+function migrateUtcShiftedDates() {
+  let fixed = 0;
+  for (const d of state.diet) {
+    const created = decodeUidCreated(d.id);
+    if (!created) continue;
+    const local = localDateString(created);
+    const utc = created.toISOString().slice(0, 10);
+    if (d.date === utc && utc !== local) {
+      d.date = local;
+      fixed++;
+    }
+  }
+  if (fixed) {
+    save();
+    setTimeout(() => flash(`Re-dated ${fixed} entr${fixed === 1 ? 'y' : 'ies'} from UTC to local date`), 600);
+  }
+  return fixed;
+}
+
 const fmt = {
   date: iso => iso ? new Date(iso + (iso.length === 10 ? 'T00:00:00' : '')).toLocaleDateString() : '',
   dt:   iso => iso ? new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '',
@@ -2826,6 +2868,8 @@ async function init() {
     } catch (e) { console.warn('IDB load failed', e); }
   }
 
+  migrateUtcShiftedDates();
+
   renderFoodResults('');
   renderAll();
 
@@ -3149,6 +3193,7 @@ async function cloudPullIfNewer({ prompt = true } = {}) {
     }
   }
   state = mergeState(remote);
+  migrateUtcShiftedDates();
   save({ skipCloud: true });
   renderAll();
   return { pulled: true, remoteTime };
@@ -3174,6 +3219,7 @@ async function cloudSyncNow({ prompt = false } = {}) {
     if (remote && remoteTime > localTime + 1000) {
       if (!prompt || confirm('Cloud has newer data (' + new Date(remoteTime).toLocaleString() + '). Pull from cloud and replace local?')) {
         state = mergeState(remote);
+        migrateUtcShiftedDates();
         save({ skipCloud: true });
         renderAll();
         setCloudStatus('Pulled from cloud · ' + new Date(remoteTime).toLocaleString());
@@ -3245,6 +3291,7 @@ document.getElementById('btn-cloud-force-pull').addEventListener('click', async 
     }
     const remote = JSON.parse(file.content);
     state = mergeState(remote);
+    migrateUtcShiftedDates();
     save({ skipCloud: true });
     renderAll();
     const remoteTime = remote.lastModified ? new Date(remote.lastModified).toLocaleString() : 'unknown';
