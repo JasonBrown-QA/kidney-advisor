@@ -437,10 +437,8 @@ function bpAverage(days) {
   };
 }
 
-function renderDietBars(container) {
-  const today = todayISO();
-  const todays = state.diet.filter(d => d.date === today);
-  const totals = todays.reduce((a, d) => {
+function sumDietTotals(entries) {
+  return entries.reduce((a, d) => {
     const s = Number(d.servings) || 1;
     a.calories   += (Number(d.calories) || 0) * s;
     a.carbs      += (Number(d.carbs) || 0) * s;
@@ -453,6 +451,12 @@ function renderDietBars(container) {
     a.fluids     += (Number(d.fluids) || 0) * s;
     return a;
   }, { calories: 0, carbs: 0, fat: 0, fiber: 0, protein: 0, sodium: 0, potassium: 0, phosphorus: 0, fluids: 0 });
+}
+
+function renderDietBars(container) {
+  const today = todayISO();
+  const todays = state.diet.filter(d => d.date === today);
+  const totals = sumDietTotals(todays);
 
   const bars = [
     { key: 'calories',   label: 'Calories',   unit: 'kcal', target: state.settings.caloriesTarget,   value: totals.calories },
@@ -475,6 +479,121 @@ function renderDietBars(container) {
       <div class="diet-bar-value">${Math.round(b.value)} / ${b.target} ${b.unit}</div>
     </div>`;
   }).join('');
+
+  const todayLabel = document.getElementById('diet-today-label');
+  if (todayLabel) todayLabel.textContent = new Date(today + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function renderDietHistory() {
+  const tbody = document.querySelector('#diet-history-table tbody');
+  const detail = document.getElementById('diet-history-detail');
+  const countEl = document.getElementById('diet-history-count');
+  if (!tbody) return;
+
+  const today = todayISO();
+  // Group prior days; skip today (Today's Totals shows that).
+  const byDate = {};
+  for (const d of state.diet) {
+    if (!d.date || d.date === today) continue;
+    (byDate[d.date] = byDate[d.date] || []).push(d);
+  }
+  const dates = Object.keys(byDate).sort().reverse();
+  if (countEl) countEl.textContent = dates.length ? `${dates.length} day${dates.length === 1 ? '' : 's'}` : '';
+
+  if (!dates.length) {
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--text-muted)">No previous days logged yet.</td></tr>`;
+    if (detail) { detail.hidden = true; detail.innerHTML = ''; }
+    return;
+  }
+
+  // Build per-day totals + over-target markers.
+  const targets = {
+    calories: state.settings.caloriesTarget,
+    carbs: state.settings.carbsTarget,
+    fat: state.settings.fatTarget,
+    fiber: state.settings.fiberTarget,
+    protein: state.settings.proteinTarget,
+    sodium: state.settings.sodiumTarget,
+    potassium: state.settings.potassiumTarget,
+    phosphorus: state.settings.phosphorusTarget,
+    fluids: state.settings.fluidTarget,
+  };
+  const cell = (val, target, decimals = 0) => {
+    const v = Math.round(val);
+    const cls = target > 0 && val >= target ? 'warn' : '';
+    return `<td class="${cls}">${decimals > 0 ? val.toFixed(decimals) : v}</td>`;
+  };
+
+  tbody.innerHTML = dates.map(date => {
+    const t = sumDietTotals(byDate[date]);
+    return `<tr data-history-date="${date}" style="cursor:pointer">
+      <td>${fmt.date(date)}</td>
+      ${cell(t.calories, targets.calories)}
+      ${cell(t.carbs, targets.carbs)}
+      ${cell(t.fat, targets.fat)}
+      ${cell(t.fiber, targets.fiber)}
+      ${cell(t.protein, targets.protein)}
+      ${cell(t.sodium, targets.sodium)}
+      ${cell(t.potassium, targets.potassium)}
+      ${cell(t.phosphorus, targets.phosphorus)}
+      ${cell(t.fluids, targets.fluids, 1)}
+    </tr>`;
+  }).join('');
+
+  tbody.querySelectorAll('[data-history-date]').forEach(tr => {
+    tr.addEventListener('click', () => showDietHistoryDetail(tr.dataset.historyDate));
+  });
+}
+
+function showDietHistoryDetail(date) {
+  const detail = document.getElementById('diet-history-detail');
+  if (!detail) return;
+  const entries = state.diet.filter(d => d.date === date);
+  if (!entries.length) { detail.hidden = true; detail.innerHTML = ''; return; }
+
+  detail.hidden = false;
+  detail.innerHTML = `
+    <div class="card-row" style="margin-top:12px">
+      <h4 style="margin:0">${fmt.date(date)} — entries</h4>
+      <button class="secondary" id="btn-close-history-detail">Close</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Item</th><th>Meal</th><th>Serv</th><th>Cal</th><th>Carb</th><th>Fat</th><th>Fib</th><th>Prot</th><th>Na</th><th>K</th><th>P</th><th>Fluids</th></tr></thead>
+        <tbody>
+          ${entries.map(d => `<tr>
+            <td>${escapeHtml(d.item || '')}</td>
+            <td>${escapeHtml(d.meal || '')}</td>
+            <td>${fmt.num(d.servings, 2)}</td>
+            <td>${fmt.num(d.calories, 0)}</td>
+            <td>${fmt.num(d.carbs, 1)}</td>
+            <td>${fmt.num(d.fat, 1)}</td>
+            <td>${fmt.num(d.fiber, 1)}</td>
+            <td>${fmt.num(d.protein, 1)}</td>
+            <td>${fmt.num(d.sodium, 0)}</td>
+            <td>${fmt.num(d.potassium, 0)}</td>
+            <td>${fmt.num(d.phosphorus, 0)}</td>
+            <td>${fmt.num(d.fluids, 1)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  const closeBtn = document.getElementById('btn-close-history-detail');
+  if (closeBtn) closeBtn.addEventListener('click', () => { detail.hidden = true; detail.innerHTML = ''; });
+  detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// Schedule a re-render at next local midnight so Today's Totals reset and the
+// previous day rolls into the history table automatically. Reschedules itself.
+let midnightTimer = null;
+function scheduleMidnightRefresh() {
+  if (midnightTimer) clearTimeout(midnightTimer);
+  const now = new Date();
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5);
+  midnightTimer = setTimeout(() => {
+    renderAll();
+    scheduleMidnightRefresh();
+  }, next.getTime() - now.getTime());
 }
 
 // ─── Labs view ────────────────────────────────────────────────────────────
@@ -1066,11 +1185,13 @@ function renderUSDAResults(foods) {
     wrap.innerHTML = '<div style="padding:10px;color:var(--text-muted)">No matches. Try a simpler query.</div>';
     return;
   }
+  const servingOptions = [0.25, 0.5, 0.75, 1, 1.5, 2, 3];
   wrap.innerHTML = foods.map((f, i) => {
     const n = extractUSDANutrients(f);
     const brand = f.brandOwner || f.brandName || '';
     const desc = f.description || '';
-    const cal = n.calories != null ? `${Math.round(n.calories)} kcal` : '— kcal';
+    const calPer = n.calories != null ? Math.round(n.calories) : null;
+    const cal = calPer != null ? `${calPer} kcal` : '— kcal';
     const macros = [
       n.protein != null ? `P ${n.protein.toFixed(1)}g` : null,
       n.carbs != null ? `C ${n.carbs.toFixed(1)}g` : null,
@@ -1082,27 +1203,98 @@ function renderUSDAResults(foods) {
       n.potassium != null ? `K ${Math.round(n.potassium)}mg` : null,
       n.phosphorus != null ? `P ${Math.round(n.phosphorus)}mg` : null,
     ].filter(Boolean).join(' · ');
+
+    const options = servingOptions.map(opt => {
+      const label = opt === 0.25 ? '1/4' : opt === 0.5 ? '1/2' : opt === 0.75 ? '3/4' : String(opt);
+      const kcal = calPer != null ? ` — ${Math.round(calPer * opt)} kcal` : '';
+      const selected = opt === 1 ? ' selected' : '';
+      return `<option value="${opt}"${selected}>${label} serving${opt === 1 ? '' : 's'}${kcal}</option>`;
+    }).join('');
+
     return `<div class="food-card" data-usda-idx="${i}">
       <div class="name">${escapeHtml(desc)}${brand ? ` <span class="food-tag" style="background:#eef;color:#338">${escapeHtml(brand)}</span>` : ''}</div>
       <div class="serving">Per ${escapeHtml(n.servingText)} · ${cal}${macros ? ' · ' + macros : ''}</div>
       ${kidney ? `<div class="stats">${kidney}</div>` : ''}
+      <div class="row" style="gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+        <label style="margin:0;font-size:13px">Servings
+          <select class="usda-serving-select" data-usda-idx="${i}" style="margin-left:6px">
+            ${options}
+            <option value="custom">Custom…</option>
+          </select>
+        </label>
+        <input type="number" class="usda-serving-custom" data-usda-idx="${i}" step="0.05" min="0.05" placeholder="e.g. 1.25" style="width:90px;display:none" />
+        <span class="usda-serving-preview hint" data-usda-idx="${i}" style="margin:0">${calPer != null ? Math.round(calPer) + ' kcal' : ''}</span>
+        <button type="button" class="primary usda-add-btn" data-usda-idx="${i}" style="margin-left:auto">Add</button>
+      </div>
     </div>`;
   }).join('');
 
-  wrap.querySelectorAll('[data-usda-idx]').forEach(card => {
-    card.addEventListener('click', () => {
-      const food = usdaLastResults[Number(card.dataset.usdaIdx)];
+  function readServings(idx) {
+    const sel = wrap.querySelector(`.usda-serving-select[data-usda-idx="${idx}"]`);
+    const custom = wrap.querySelector(`.usda-serving-custom[data-usda-idx="${idx}"]`);
+    if (!sel) return 1;
+    if (sel.value === 'custom') {
+      const v = parseFloat(custom && custom.value);
+      return v > 0 ? v : null;
+    }
+    return parseFloat(sel.value) || 1;
+  }
+
+  function updatePreview(idx) {
+    const food = usdaLastResults[Number(idx)];
+    const preview = wrap.querySelector(`.usda-serving-preview[data-usda-idx="${idx}"]`);
+    if (!food || !preview) return;
+    const n = extractUSDANutrients(food);
+    const s = readServings(idx);
+    if (s == null) { preview.textContent = 'Enter a custom amount'; return; }
+    const parts = [];
+    if (n.calories != null) parts.push(`${Math.round(n.calories * s)} kcal`);
+    if (n.sodium != null) parts.push(`Na ${Math.round(n.sodium * s)}mg`);
+    if (n.potassium != null) parts.push(`K ${Math.round(n.potassium * s)}mg`);
+    preview.textContent = parts.join(' · ');
+  }
+
+  wrap.querySelectorAll('.usda-serving-select').forEach(sel => {
+    sel.addEventListener('change', e => {
+      const idx = sel.dataset.usdaIdx;
+      const custom = wrap.querySelector(`.usda-serving-custom[data-usda-idx="${idx}"]`);
+      if (sel.value === 'custom') {
+        if (custom) { custom.style.display = ''; custom.focus(); }
+      } else {
+        if (custom) { custom.style.display = 'none'; }
+      }
+      updatePreview(idx);
+      e.stopPropagation();
+    });
+  });
+
+  wrap.querySelectorAll('.usda-serving-custom').forEach(input => {
+    input.addEventListener('input', e => {
+      updatePreview(input.dataset.usdaIdx);
+      e.stopPropagation();
+    });
+    input.addEventListener('click', e => e.stopPropagation());
+  });
+
+  wrap.querySelectorAll('.usda-add-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const idx = btn.dataset.usdaIdx;
+      const food = usdaLastResults[Number(idx)];
       if (!food) return;
+      const servings = readServings(idx);
+      if (!servings || isNaN(servings) || servings <= 0) {
+        alert('Enter a serving amount greater than 0.');
+        return;
+      }
       const n = extractUSDANutrients(food);
-      const servings = parseFloat(prompt(`How many servings of "${food.description}"?\n(1 serving = ${n.servingText})`, '1'));
-      if (!servings || isNaN(servings) || servings <= 0) return;
       const entry = { id: uid(), date: todayISO(), item: food.description, servings };
       for (const f of ['calories','carbs','fat','fiber','protein','sodium','potassium','phosphorus']) {
         if (n[f] != null) entry[f] = n[f];
       }
       state.diet.push(entry);
       save();
-      flash(`Added ${food.description}`);
+      flash(`Added ${food.description} × ${servings}`);
       renderAll();
     });
   });
@@ -1205,6 +1397,7 @@ document.getElementById('bp-quick-form').addEventListener('submit', e => {
 
 function renderDiet() {
   renderDietBars(document.getElementById('diet-bars'));
+  renderDietHistory();
 
   const today = todayISO();
   const tbody = document.querySelector('#diet-table tbody');
@@ -2669,6 +2862,10 @@ async function init() {
 
   // Initial update check after the rest of init has completed.
   checkForUpdate();
+
+  // Refresh at midnight so Today's Totals reset and the prior day rolls into
+  // the history table without requiring a page reload.
+  scheduleMidnightRefresh();
 }
 
 // Pull-to-refresh — iOS standalone PWAs don't get the native gesture, so we

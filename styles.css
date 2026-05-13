@@ -252,6 +252,9 @@ tbody tr:hover { background: var(--surface-2); }
 .diet-bar-fill.bad { background: var(--bad); }
 .diet-bar-value { font-variant-numeric: tabular-nums; text-align: right; color: var(--text-muted); }
 
+#diet-history-table td.warn { color: var(--warn); font-weight: 600; }
+#diet-history-table tbody tr:hover { background: var(--surface-2); }
+
 .bp-stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));

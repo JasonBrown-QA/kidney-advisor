@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Kidney Advisor</title>
-<link rel="stylesheet" href="styles.css?v=20260512-1145" />
+<link rel="stylesheet" href="styles.css?v=20260513-0930" />
 
 <!-- PWA / iOS home-screen app -->
 <link rel="manifest" href="manifest.json" />
@@ -102,25 +102,6 @@
   <!-- LABS -->
   <section class="view" id="view-labs">
     <div class="card">
-      <h3>Add Lab Result</h3>
-      <form id="lab-form" class="form-grid">
-        <label>Date <input type="date" name="date" required /></label>
-        <label>eGFR <input type="number" step="0.1" name="egfr" placeholder="mL/min/1.73m²" /></label>
-        <label>Creatinine <input type="number" step="0.01" name="creatinine" placeholder="mg/dL" /></label>
-        <label>BUN <input type="number" step="0.1" name="bun" placeholder="mg/dL" /></label>
-        <label>Potassium (K) <input type="number" step="0.1" name="potassium" placeholder="mEq/L" /></label>
-        <label>Phosphorus <input type="number" step="0.1" name="phosphorus" placeholder="mg/dL" /></label>
-        <label>Calcium <input type="number" step="0.1" name="calcium" placeholder="mg/dL" /></label>
-        <label>Hemoglobin <input type="number" step="0.1" name="hemoglobin" placeholder="g/dL" /></label>
-        <label>Albumin <input type="number" step="0.1" name="albumin" placeholder="g/dL" /></label>
-        <label>Bicarbonate (CO₂) <input type="number" step="0.1" name="bicarbonate" placeholder="mEq/L" /></label>
-        <label>UACR <input type="number" step="0.1" name="uacr" placeholder="mg/g" /></label>
-        <label class="full">Notes <input type="text" name="notes" placeholder="optional" /></label>
-        <button type="submit" class="primary full">Save Lab</button>
-      </form>
-    </div>
-
-    <div class="card">
       <div class="card-row">
         <h3 style="margin:0">Import / Export</h3>
         <div class="row">
@@ -160,6 +141,25 @@
       <div class="card"><h3>Phosphorus</h3><div class="chart-wrap"><canvas id="chart-p"></canvas></div></div>
       <div class="card"><h3>Hemoglobin</h3><div class="chart-wrap"><canvas id="chart-hgb"></canvas></div></div>
       <div class="card"><h3>UACR</h3><div class="chart-wrap"><canvas id="chart-uacr"></canvas></div></div>
+    </div>
+
+    <div class="card">
+      <h3>Add Lab Result</h3>
+      <form id="lab-form" class="form-grid">
+        <label>Date <input type="date" name="date" required /></label>
+        <label>eGFR <input type="number" step="0.1" name="egfr" placeholder="mL/min/1.73m²" /></label>
+        <label>Creatinine <input type="number" step="0.01" name="creatinine" placeholder="mg/dL" /></label>
+        <label>BUN <input type="number" step="0.1" name="bun" placeholder="mg/dL" /></label>
+        <label>Potassium (K) <input type="number" step="0.1" name="potassium" placeholder="mEq/L" /></label>
+        <label>Phosphorus <input type="number" step="0.1" name="phosphorus" placeholder="mg/dL" /></label>
+        <label>Calcium <input type="number" step="0.1" name="calcium" placeholder="mg/dL" /></label>
+        <label>Hemoglobin <input type="number" step="0.1" name="hemoglobin" placeholder="g/dL" /></label>
+        <label>Albumin <input type="number" step="0.1" name="albumin" placeholder="g/dL" /></label>
+        <label>Bicarbonate (CO₂) <input type="number" step="0.1" name="bicarbonate" placeholder="mEq/L" /></label>
+        <label>UACR <input type="number" step="0.1" name="uacr" placeholder="mg/g" /></label>
+        <label class="full">Notes <input type="text" name="notes" placeholder="optional" /></label>
+        <button type="submit" class="primary full">Save Lab</button>
+      </form>
     </div>
   </section>
 
@@ -245,8 +245,26 @@
   <!-- DIET -->
   <section class="view active" id="view-diet">
     <div class="card">
-      <h3>Today's Totals</h3>
+      <div class="card-row">
+        <h3 style="margin:0">Today's Totals</h3>
+        <span class="hint" id="diet-today-label" style="margin:0"></span>
+      </div>
       <div class="diet-bars" id="diet-bars"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-row">
+        <h3 style="margin:0">Daily Totals History</h3>
+        <span class="hint" id="diet-history-count" style="margin:0"></span>
+      </div>
+      <p class="hint">Past days reset automatically at midnight. Tap a row to view the entries from that day.</p>
+      <div class="table-wrap">
+        <table id="diet-history-table">
+          <thead><tr><th>Date</th><th>Cal</th><th>Carb</th><th>Fat</th><th>Fib</th><th>Prot</th><th>Na</th><th>K</th><th>P</th><th>Fluids</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="diet-history-detail" hidden></div>
     </div>
 
     <div class="grid grid-2">
@@ -631,7 +649,7 @@
         <button id="btn-cloud-disconnect" class="danger" hidden>Disconnect</button>
       </div>
       <div id="cloud-sync-status" class="hint" style="margin-top:8px"></div>
-      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260512-1145 — Cache-Control header removed (CORS fix)</span></p>
+      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260513-0930 — Daily totals history + midnight reset, Labs reordered, USDA serving dropdown</span></p>
     </div>
 
     <div class="card">
@@ -658,6 +676,6 @@
 </main>
 
 <script src="foods.js"></script>
-<script src="app.js?v=20260512-1145"></script>
+<script src="app.js?v=20260513-0930"></script>
 </body>
 </html>

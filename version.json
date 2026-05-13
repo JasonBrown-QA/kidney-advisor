@@ -1,4 +1,4 @@
 {
-  "build": "20260512-1145",
-  "summary": "Cache-Control header removed from ghFetch — CORS preflight fix"
+  "build": "20260513-0930",
+  "summary": "Daily totals midnight reset + history table; Labs reordered; USDA serving dropdown"
 }
