@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Kidney Advisor</title>
-<link rel="stylesheet" href="styles.css?v=20260513-1050" />
+<link rel="stylesheet" href="styles.css?v=20260513-1130" />
 
 <!-- PWA / iOS home-screen app -->
 <link rel="manifest" href="manifest.json" />
@@ -308,6 +308,23 @@
         <p class="hint" style="margin-top:8px"><span id="bp-quick-last"></span></p>
         <p class="hint">Open the Blood Pressure tab for trend chart + edit/delete.</p>
       </div>
+    </div>
+
+    <div class="card">
+      <div class="card-row">
+        <h3 style="margin:0">Scan Barcode</h3>
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <button id="btn-barcode-scan" class="primary">Open Scanner</button>
+        </div>
+      </div>
+      <p class="hint">Aim your camera at any UPC/EAN barcode. We look it up via Open Food Facts (free, no key) and pre-fill calories, carbs, protein, fiber, fat, sodium, potassium, and phosphorus.</p>
+      <form id="barcode-manual-form" class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
+        <label style="margin:0;flex:1;min-width:200px">Or type barcode
+          <input type="text" id="barcode-manual-input" inputmode="numeric" autocomplete="off" placeholder="e.g., 0049000028904" style="width:100%;margin-top:4px" />
+        </label>
+        <button type="submit" class="secondary">Look up</button>
+      </form>
+      <div id="barcode-result" class="food-results" hidden></div>
     </div>
 
     <div class="card">
@@ -652,7 +669,7 @@
         <button id="btn-cloud-disconnect" class="danger" hidden>Disconnect</button>
       </div>
       <div id="cloud-sync-status" class="hint" style="margin-top:8px"></div>
-      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260513-1050 — Manual one-tap re-date escape hatch on Today's Totals</span></p>
+      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260513-1130 — Barcode scanner on Dashboard (BarcodeDetector + Open Food Facts)</span></p>
     </div>
 
     <div class="card">
@@ -678,7 +695,23 @@
 
 </main>
 
+<div id="barcode-scanner-modal" class="barcode-modal" hidden>
+  <div class="barcode-modal-inner">
+    <div class="barcode-modal-header">
+      <span>Scan barcode</span>
+      <button id="btn-barcode-close" class="icon" aria-label="Close" title="Close">×</button>
+    </div>
+    <div class="barcode-video-wrap">
+      <video id="barcode-video" playsinline autoplay muted></video>
+      <div class="barcode-target"></div>
+    </div>
+    <div class="barcode-modal-footer">
+      <div id="barcode-status" class="hint">Initializing camera…</div>
+    </div>
+  </div>
+</div>
+
 <script src="foods.js"></script>
-<script src="app.js?v=20260513-1050"></script>
+<script src="app.js?v=20260513-1130"></script>
 </body>
 </html>

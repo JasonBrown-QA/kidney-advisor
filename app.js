@@ -1387,6 +1387,290 @@ if (usdaKeyForm) {
   if (existing) usdaKeyForm.elements.usdaKey.value = existing;
 }
 
+// ─── Barcode scanner + Open Food Facts lookup ─────────────────────────────
+
+let barcodeStream = null;
+let barcodeDetector = null;
+let barcodeScanLoopId = null;
+let barcodeScanning = false;
+
+const BARCODE_FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf'];
+
+function setBarcodeStatus(msg) {
+  const el = document.getElementById('barcode-status');
+  if (el) el.innerHTML = msg;
+}
+
+async function openBarcodeScanner() {
+  const modal = document.getElementById('barcode-scanner-modal');
+  const video = document.getElementById('barcode-video');
+  if (!modal || !video) return;
+
+  if (!('BarcodeDetector' in window)) {
+    alert('Live barcode scanning is not supported in this browser. Type the number into the "Or type barcode" field instead.');
+    document.getElementById('barcode-manual-input')?.focus();
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    alert('Camera access is not available in this browser. Type the barcode instead.');
+    return;
+  }
+
+  modal.hidden = false;
+  setBarcodeStatus('Requesting camera…');
+
+  try {
+    barcodeStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } },
+      audio: false,
+    });
+    video.srcObject = barcodeStream;
+    await video.play();
+    setBarcodeStatus('Hold still — point the back camera at the barcode.');
+
+    try {
+      barcodeDetector = new BarcodeDetector({ formats: BARCODE_FORMATS });
+    } catch {
+      barcodeDetector = new BarcodeDetector(); // some browsers reject unknown formats
+    }
+
+    barcodeScanning = true;
+    scheduleBarcodeDetect(video);
+  } catch (err) {
+    setBarcodeStatus(`Camera failed: ${escapeHtml(err.message || String(err))}. Type the barcode instead.`);
+  }
+}
+
+function scheduleBarcodeDetect(video) {
+  if (!barcodeScanning) return;
+  barcodeScanLoopId = requestAnimationFrame(async () => {
+    if (!barcodeScanning) return;
+    try {
+      const codes = await barcodeDetector.detect(video);
+      if (codes && codes.length) {
+        const value = codes[0].rawValue;
+        if (value) {
+          onBarcodeDetected(value);
+          return;
+        }
+      }
+    } catch (e) {
+      // detector occasionally throws on early frames — keep looping
+    }
+    scheduleBarcodeDetect(video);
+  });
+}
+
+function closeBarcodeScanner() {
+  barcodeScanning = false;
+  if (barcodeScanLoopId) { cancelAnimationFrame(barcodeScanLoopId); barcodeScanLoopId = null; }
+  if (barcodeStream) {
+    barcodeStream.getTracks().forEach(t => t.stop());
+    barcodeStream = null;
+  }
+  const modal = document.getElementById('barcode-scanner-modal');
+  if (modal) modal.hidden = true;
+}
+
+function onBarcodeDetected(code) {
+  closeBarcodeScanner();
+  flash(`Scanned: ${code}`);
+  // navigator.vibrate is optional; not on iOS but harmless to call
+  if (navigator.vibrate) navigator.vibrate(50);
+  const manualInput = document.getElementById('barcode-manual-input');
+  if (manualInput) manualInput.value = code;
+  lookupBarcode(code);
+}
+
+async function lookupBarcode(code) {
+  const wrap = document.getElementById('barcode-result');
+  if (!wrap) return;
+  const normalized = String(code).replace(/\D/g, '');
+  if (!normalized) {
+    wrap.hidden = false;
+    wrap.innerHTML = `<div style="padding:10px;color:var(--bad)">Enter a numeric barcode.</div>`;
+    return;
+  }
+
+  wrap.hidden = false;
+  wrap.innerHTML = `<div style="padding:10px;color:var(--text-muted)"><span class="advisor-spinner"></span>Looking up ${escapeHtml(normalized)}…</div>`;
+
+  try {
+    const url = `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(normalized)}.json?fields=product_name,product_name_en,brands,serving_size,serving_quantity,nutriments,quantity,image_front_small_url`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Open Food Facts returned ${res.status}`);
+    const data = await res.json();
+    if (data.status !== 1 || !data.product) {
+      wrap.innerHTML = `<div style="padding:10px">No match for <strong>${escapeHtml(normalized)}</strong> in Open Food Facts. Try the USDA search below, or use Custom Entry.</div>`;
+      return;
+    }
+    renderBarcodeProduct(data.product, normalized);
+  } catch (err) {
+    wrap.innerHTML = `<div style="padding:10px;color:var(--bad)">Lookup failed: ${escapeHtml(err.message || String(err))}</div>`;
+  }
+}
+
+// Open Food Facts stores per-100g (or per-100ml) values. serving_quantity is
+// usually grams. Convert to per-serving and to mg for kidney values.
+function extractOffNutrients(p) {
+  const n = p.nutriments || {};
+  const servingG = parseFloat(p.serving_quantity);
+  const useServing = Number.isFinite(servingG) && servingG > 0;
+  const mult = useServing ? servingG / 100 : 1;
+
+  const v = (k) => {
+    const raw = n[k];
+    if (raw == null || raw === '') return null;
+    const num = Number(raw);
+    return Number.isFinite(num) ? num : null;
+  };
+
+  // Try per-serving fields first if OFF provides them, else scale per-100g.
+  const pick = (servingKey, per100Key, scaleMg = 1) => {
+    const s = v(servingKey);
+    if (s != null) return s * scaleMg;
+    const p100 = v(per100Key);
+    if (p100 != null) return p100 * mult * scaleMg;
+    return null;
+  };
+
+  // Sodium: OFF gives sodium in grams; convert to mg. Fallback: salt_g * 400.
+  let sodium = pick('sodium_serving', 'sodium_100g', 1000);
+  if (sodium == null) {
+    const saltServ = v('salt_serving');
+    const salt100 = v('salt_100g');
+    if (saltServ != null) sodium = saltServ * 400;
+    else if (salt100 != null) sodium = salt100 * mult * 400;
+  }
+
+  return {
+    perServing: useServing,
+    servingText: p.serving_size || (useServing ? `${servingG} g` : '100 g'),
+    calories:   pick('energy-kcal_serving', 'energy-kcal_100g'),
+    protein:    pick('proteins_serving',    'proteins_100g'),
+    fat:        pick('fat_serving',         'fat_100g'),
+    carbs:      pick('carbohydrates_serving','carbohydrates_100g'),
+    fiber:      pick('fiber_serving',       'fiber_100g'),
+    sugars:     pick('sugars_serving',      'sugars_100g'),
+    sodium,
+    potassium:  pick('potassium_serving',   'potassium_100g', 1000),
+    phosphorus: pick('phosphorus_serving',  'phosphorus_100g', 1000),
+  };
+}
+
+function renderBarcodeProduct(product, code) {
+  const wrap = document.getElementById('barcode-result');
+  if (!wrap) return;
+  const n = extractOffNutrients(product);
+  const name = product.product_name || product.product_name_en || 'Unknown product';
+  const brand = product.brands || '';
+  const calPer = n.calories != null ? Math.round(n.calories) : null;
+  const macros = [
+    n.protein != null ? `P ${n.protein.toFixed(1)}g` : null,
+    n.carbs != null ? `C ${n.carbs.toFixed(1)}g` : null,
+    n.fat != null ? `F ${n.fat.toFixed(1)}g` : null,
+    n.fiber != null ? `Fib ${n.fiber.toFixed(1)}g` : null,
+  ].filter(Boolean).join(' · ');
+  const kidney = [
+    n.sodium != null ? `Na ${Math.round(n.sodium)}mg` : null,
+    n.potassium != null ? `K ${Math.round(n.potassium)}mg` : null,
+    n.phosphorus != null ? `P ${Math.round(n.phosphorus)}mg` : null,
+  ].filter(Boolean).join(' · ');
+
+  const servingOptions = [0.25, 0.5, 0.75, 1, 1.5, 2, 3];
+  const options = servingOptions.map(opt => {
+    const label = opt === 0.25 ? '1/4' : opt === 0.5 ? '1/2' : opt === 0.75 ? '3/4' : String(opt);
+    const kcal = calPer != null ? ` — ${Math.round(calPer * opt)} kcal` : '';
+    const selected = opt === 1 ? ' selected' : '';
+    return `<option value="${opt}"${selected}>${label} serving${opt === 1 ? '' : 's'}${kcal}</option>`;
+  }).join('');
+
+  const imgHtml = product.image_front_small_url
+    ? `<img src="${escapeHtml(product.image_front_small_url)}" alt="" style="float:right;max-width:64px;max-height:64px;margin-left:10px;border-radius:6px" />`
+    : '';
+
+  wrap.innerHTML = `<div class="food-card">
+    ${imgHtml}
+    <div class="name">${escapeHtml(name)}${brand ? ` <span class="food-tag" style="background:#eef;color:#338">${escapeHtml(brand)}</span>` : ''}</div>
+    <div class="serving">Per ${escapeHtml(n.servingText)} · ${calPer != null ? calPer + ' kcal' : '— kcal'}${macros ? ' · ' + macros : ''}</div>
+    ${kidney ? `<div class="stats">${kidney}</div>` : ''}
+    <div class="row" style="gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+      <label style="margin:0;font-size:13px">Servings
+        <select id="barcode-serving-select" style="margin-left:6px">
+          ${options}
+          <option value="custom">Custom…</option>
+        </select>
+      </label>
+      <input type="number" id="barcode-serving-custom" step="0.05" min="0.05" placeholder="e.g. 1.25" style="width:90px;display:none" />
+      <span id="barcode-serving-preview" class="hint" style="margin:0">${calPer != null ? calPer + ' kcal' : ''}</span>
+      <button type="button" class="primary" id="btn-barcode-add" style="margin-left:auto">Add to today</button>
+      <button type="button" class="secondary" id="btn-barcode-dismiss">Dismiss</button>
+    </div>
+    <p class="hint" style="margin-top:8px;font-size:11px;opacity:0.7">UPC ${escapeHtml(code)} · data from Open Food Facts</p>
+  </div>`;
+
+  const sel = document.getElementById('barcode-serving-select');
+  const custom = document.getElementById('barcode-serving-custom');
+  const preview = document.getElementById('barcode-serving-preview');
+
+  function readServings() {
+    if (sel.value === 'custom') {
+      const v = parseFloat(custom.value);
+      return v > 0 ? v : null;
+    }
+    return parseFloat(sel.value) || 1;
+  }
+  function updatePreview() {
+    const s = readServings();
+    if (s == null) { preview.textContent = 'Enter a custom amount'; return; }
+    const parts = [];
+    if (n.calories != null) parts.push(`${Math.round(n.calories * s)} kcal`);
+    if (n.sodium != null) parts.push(`Na ${Math.round(n.sodium * s)}mg`);
+    if (n.potassium != null) parts.push(`K ${Math.round(n.potassium * s)}mg`);
+    preview.textContent = parts.join(' · ');
+  }
+  sel.addEventListener('change', () => {
+    custom.style.display = sel.value === 'custom' ? '' : 'none';
+    if (sel.value === 'custom') custom.focus();
+    updatePreview();
+  });
+  custom.addEventListener('input', updatePreview);
+
+  document.getElementById('btn-barcode-add').addEventListener('click', () => {
+    const servings = readServings();
+    if (!servings || servings <= 0) { alert('Enter a serving amount greater than 0.'); return; }
+    const entry = { id: uid(), date: todayISO(), item: name, servings };
+    for (const f of ['calories','carbs','fat','fiber','protein','sodium','potassium','phosphorus']) {
+      if (n[f] != null) entry[f] = n[f];
+    }
+    state.diet.push(entry);
+    save();
+    flash(`Added ${name} × ${servings}`);
+    wrap.hidden = true;
+    wrap.innerHTML = '';
+    const manualInput = document.getElementById('barcode-manual-input');
+    if (manualInput) manualInput.value = '';
+    renderAll();
+  });
+
+  document.getElementById('btn-barcode-dismiss').addEventListener('click', () => {
+    wrap.hidden = true;
+    wrap.innerHTML = '';
+  });
+}
+
+document.getElementById('btn-barcode-scan')?.addEventListener('click', openBarcodeScanner);
+document.getElementById('btn-barcode-close')?.addEventListener('click', closeBarcodeScanner);
+document.getElementById('barcode-scanner-modal')?.addEventListener('click', (e) => {
+  if (e.target.id === 'barcode-scanner-modal') closeBarcodeScanner();
+});
+document.getElementById('barcode-manual-form')?.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const val = document.getElementById('barcode-manual-input').value.trim();
+  if (!val) return;
+  lookupBarcode(val);
+});
+
 function logWater(oz) {
   if (!oz || isNaN(oz) || oz <= 0) return;
   state.diet.push({

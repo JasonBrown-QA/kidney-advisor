@@ -255,6 +255,59 @@ tbody tr:hover { background: var(--surface-2); }
 #diet-history-table td.warn { color: var(--warn); font-weight: 600; }
 #diet-history-table tbody tr:hover { background: var(--surface-2); }
 
+.barcode-modal {
+  position: fixed; inset: 0; z-index: 2000;
+  background: rgba(0,0,0,0.92);
+  display: flex; align-items: center; justify-content: center;
+  padding: env(safe-area-inset-top, 12px) 12px env(safe-area-inset-bottom, 12px);
+}
+.barcode-modal-inner {
+  background: #111; color: #fff;
+  border-radius: 12px;
+  max-width: 600px; width: 100%;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.barcode-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px;
+  font-weight: 600;
+  border-bottom: 1px solid #222;
+}
+.barcode-modal-header .icon {
+  background: transparent; color: #fff; border: 0;
+  font-size: 24px; line-height: 1; cursor: pointer; padding: 4px 8px;
+}
+.barcode-video-wrap {
+  position: relative;
+  width: 100%;
+  background: #000;
+  aspect-ratio: 4 / 3;
+}
+#barcode-video {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.barcode-target {
+  position: absolute; inset: 0;
+  pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.barcode-target::before {
+  content: '';
+  width: 70%; height: 28%;
+  border: 2px solid rgba(255,255,255,0.85);
+  border-radius: 8px;
+  box-shadow: 0 0 0 9999px rgba(0,0,0,0.35);
+}
+.barcode-modal-footer {
+  padding: 12px 14px;
+  font-size: 13px;
+  color: #ccc;
+}
+.barcode-modal-footer .hint { color: #ccc; }
+
 .bp-stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
