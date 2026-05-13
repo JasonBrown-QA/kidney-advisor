@@ -530,6 +530,27 @@ function renderDietBars(container) {
 
   const todayLabel = document.getElementById('diet-today-label');
   if (todayLabel) todayLabel.textContent = new Date(today + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+
+  const actions = document.getElementById('today-totals-actions');
+  if (actions) actions.hidden = todays.length === 0;
+}
+
+function yesterdayISO() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return localDateString(d);
+}
+
+function moveTodayEntriesToYesterday() {
+  const today = todayISO();
+  const yest = yesterdayISO();
+  const todays = state.diet.filter(d => d.date === today);
+  if (!todays.length) { flash('Nothing logged today.'); return; }
+  if (!confirm(`Move all ${todays.length} entr${todays.length === 1 ? 'y' : 'ies'} currently dated today (${fmt.date(today)}) to yesterday (${fmt.date(yest)})?`)) return;
+  for (const d of todays) d.date = yest;
+  save();
+  renderAll();
+  flash(`Moved ${todays.length} entr${todays.length === 1 ? 'y' : 'ies'} to ${fmt.date(yest)}`);
 }
 
 function renderDietHistory() {
@@ -1688,6 +1709,9 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   renderAll();
   flash('All data cleared');
 });
+
+const btnMoveToday = document.getElementById('btn-move-today-to-yesterday');
+if (btnMoveToday) btnMoveToday.addEventListener('click', moveTodayEntriesToYesterday);
 
 document.getElementById('btn-paste-import').addEventListener('click', async () => {
   const raw = document.getElementById('paste-import-text').value.trim();
