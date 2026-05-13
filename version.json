@@ -1,4 +1,4 @@
 {
-  "build": "20260513-1200",
-  "summary": "Swap BarcodeDetector for html5-qrcode — works in Safari/iOS"
+  "build": "20260513-1215",
+  "summary": "Fix scanner facingMode — html5-qrcode rejects { ideal: ... }"
 }

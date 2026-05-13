@@ -1462,8 +1462,12 @@ async function openBarcodeScanner() {
       ] : undefined,
     };
 
+    // html5-qrcode rejects `{ ideal: 'environment' }`. It accepts either a
+    // plain string ('environment' or 'user') or `{ exact: 'environment' }`.
+    // Plain string degrades gracefully on devices without a back camera
+    // (desktop) by falling back to the default camera.
     await html5QrCodeInstance.start(
-      { facingMode: { ideal: 'environment' } },
+      { facingMode: 'environment' },
       config,
       (decodedText) => onBarcodeDetected(decodedText),
       () => { /* per-frame decode failures are expected — ignore */ }
