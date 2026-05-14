@@ -1,4 +1,4 @@
 {
-  "build": "20260514-1915",
-  "summary": "Robust JSON parsing for restaurant AI picks (truncation recovery + better errors)"
+  "build": "20260514-1945",
+  "summary": "Disable Gemini thinking for restaurant picks so JSON doesn't truncate"
 }

@@ -1831,12 +1831,16 @@ Return 4–6 kidney-friendly menu picks as JSON.`;
       systemInstruction: { parts: [{ text: systemPrompt }] },
       contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
       generationConfig: {
-        // Bumped from 2048 — when the model writes longer `why` strings,
-        // 4–6 picks routinely overflowed 2048 and got truncated mid-array,
-        // surfacing as "AI returned invalid JSON".
-        maxOutputTokens: 4096,
+        // Gemini 2.5 Flash spends "thinking" tokens against maxOutputTokens
+        // before emitting any visible content. With dynamic thinking on,
+        // even 4096 wasn't enough — picks JSON kept truncating mid-array.
+        // For a structured short-form output like this we don't need
+        // reasoning, so thinkingBudget: 0 dedicates the full budget to the
+        // actual response. Bumped maxOutputTokens to 8192 as a safety net.
+        maxOutputTokens: 8192,
         temperature: 0.4,
         responseMimeType: 'application/json',
+        thinkingConfig: { thinkingBudget: 0 },
       },
     }),
   });
