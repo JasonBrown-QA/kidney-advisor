@@ -15,19 +15,31 @@ const FIRED_KEY = 'kidney-advisor-fired';
 const ADVISOR_SECRET_KEY = 'kidney-advisor-secret';
 const ADVISOR_USAGE_KEY = 'kidney-advisor-usage';
 
+// Defaults tuned to Jason's profile: 56 y/o male, 195 lb (88.5 kg), CKD stage 3b
+// trending toward stage 4 (last eGFR 27, 2026-04-27). Values follow KDOQI 2020
+// nutrition guidance for non-dialysis CKD stages 3–5:
+//   Energy 25–35 kcal/kg/day → ~2200 kcal at sedentary baseline
+//   Protein 0.55–0.60 g/kg/day (LPD to slow progression) → ~53 g
+//   Sodium <2300 mg, tightened to 2000 given CKD progression
+//   Potassium 2000–3000 mg, individualized to lab K
+//   Phosphorus 800–1000 mg, tightened to 800 given stage 4 risk
+//   Fiber 30 g (men 50+ DGA)
+//   Macros: ~50% carbs (275 g) / ~30% fat (73 g) of 2200 kcal
+// Adjust per nephrology/RD guidance — these are starting targets, not orders.
 const DEFAULT_SETTINGS = {
-  weightLbs: 180,
-  sodiumTarget: 2300,
+  weightLbs: 195,
+  sodiumTarget: 2000,
   potassiumTarget: 2500,
-  phosphorusTarget: 900,
-  proteinTarget: 55,
+  phosphorusTarget: 800,
+  proteinTarget: 53,
   fluidTarget: 64,
-  caloriesTarget: 2000,
-  carbsTarget: 250,
-  fatTarget: 65,
-  fiberTarget: 28,
+  caloriesTarget: 2200,
+  carbsTarget: 275,
+  fatTarget: 73,
+  fiberTarget: 30,
   bpSys: 130,
   bpDia: 80,
+  settingsProfileVersion: 1,
 };
 
 const DEFAULT_REMINDERS = {
@@ -48,7 +60,15 @@ function load() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return blankState();
     const parsed = JSON.parse(raw);
-    return mergeState(parsed);
+    const merged = mergeState(parsed);
+    // Persist any settings-profile migration in localStorage so the new
+    // targets stick even if the user never edits anything this session.
+    // Skip the cloud push — each device migrates on its own first launch
+    // and last-write-wins would otherwise race across devices.
+    if (Number(parsed?.settings?.settingsProfileVersion || 0) < TARGET_PROFILE_VERSION) {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch {}
+    }
+    return merged;
   } catch (e) {
     console.error('Load failed', e);
     return blankState();
@@ -56,7 +76,7 @@ function load() {
 }
 
 function mergeState(incoming) {
-  return {
+  const merged = {
     ...blankState(),
     ...incoming,
     settings: { ...DEFAULT_SETTINGS, ...(incoming.settings || {}) },
@@ -65,6 +85,36 @@ function mergeState(incoming) {
     visit: incoming.visit || { date: '', provider: '', notes: '' },
     advisorChat: incoming.advisorChat || [],
   };
+  applySettingsProfileMigrations(merged);
+  return merged;
+}
+
+// One-time settings refresh. When DEFAULT_SETTINGS gets retuned (e.g. new
+// CKD-stage guidance), bump TARGET_PROFILE_VERSION and add the keys that
+// should be force-overwritten in this revision. Saved state from prior
+// versions takes precedence in mergeState's spread, so without this Jason's
+// old targets would shadow the new defaults forever.
+const TARGET_PROFILE_VERSION = 1;
+const TARGET_PROFILE_KEYS_BY_VERSION = {
+  1: ['weightLbs', 'sodiumTarget', 'potassiumTarget', 'phosphorusTarget',
+      'proteinTarget', 'fluidTarget', 'caloriesTarget', 'carbsTarget',
+      'fatTarget', 'fiberTarget'],
+};
+function applySettingsProfileMigrations(s) {
+  const current = Number(s.settings.settingsProfileVersion) || 0;
+  if (current >= TARGET_PROFILE_VERSION) return false;
+  let changed = false;
+  for (let v = current + 1; v <= TARGET_PROFILE_VERSION; v++) {
+    const keys = TARGET_PROFILE_KEYS_BY_VERSION[v] || [];
+    for (const k of keys) {
+      if (s.settings[k] !== DEFAULT_SETTINGS[k]) {
+        s.settings[k] = DEFAULT_SETTINGS[k];
+        changed = true;
+      }
+    }
+  }
+  s.settings.settingsProfileVersion = TARGET_PROFILE_VERSION;
+  return changed;
 }
 
 function blankState() {
@@ -1158,6 +1208,9 @@ let usdaLastResults = [];
 
 async function searchUSDA(query) {
   const wrap = document.getElementById('usda-results');
+  // Surface kidney-friendly restaurant picks above the USDA results when the
+  // query names a chain we recognize. Runs in parallel with the USDA fetch.
+  renderRestaurantSuggestions(detectRestaurant(query));
   if (!query || query.trim().length < 2) {
     wrap.innerHTML = '';
     return;
@@ -1371,8 +1424,396 @@ function renderUSDAResults(foods) {
 
 document.getElementById('usda-search').addEventListener('input', e => {
   clearTimeout(usdaSearchTimer);
+  // Restaurant suggestions render immediately on the brand keyword — no need
+  // to wait for the 400 ms USDA debounce. Cheap detection, cached AI output.
+  renderRestaurantSuggestions(detectRestaurant(e.target.value));
   usdaSearchTimer = setTimeout(() => searchUSDA(e.target.value), 400);
 });
+
+// ─── Restaurant kidney-friendly picks ─────────────────────────────────────
+// When the USDA search query names a chain restaurant, surface CKD-tuned
+// menu suggestions above the raw USDA results. Static hand-picked items
+// render immediately; if a Gemini API key is configured, richer AI-generated
+// picks replace them and get cached for 30 days per chain.
+
+const RESTAURANT_CACHE_KEY = 'kidney-advisor-restaurant-picks';
+const RESTAURANT_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Keyword (lowercase) → display name. Longer keywords listed first so
+// "panda express" matches before "panda" would in a shorter list.
+const RESTAURANT_BRANDS = [
+  ['mcdonalds', "McDonald's"], ['mcdonald', "McDonald's"],
+  ['burger king', 'Burger King'],
+  ['wendys', "Wendy's"], ["wendy", "Wendy's"],
+  ['chick-fil-a', 'Chick-fil-A'], ['chick fil a', 'Chick-fil-A'], ['chickfila', 'Chick-fil-A'],
+  ['starbucks', 'Starbucks'],
+  ['taco bell', 'Taco Bell'],
+  ['subway', 'Subway'],
+  ['kfc', 'KFC'],
+  ['chipotle', 'Chipotle'],
+  ['pizza hut', 'Pizza Hut'],
+  ['dominos', "Domino's"], ['domino', "Domino's"],
+  ['olive garden', 'Olive Garden'],
+  ['applebees', "Applebee's"], ['applebee', "Applebee's"],
+  ['chilis', "Chili's"],
+  ['ihop', 'IHOP'],
+  ['dennys', "Denny's"], ['denny', "Denny's"],
+  ['cracker barrel', 'Cracker Barrel'],
+  ['panera', 'Panera Bread'],
+  ['five guys', 'Five Guys'],
+  ['in-n-out', 'In-N-Out'], ['in n out', 'In-N-Out'],
+  ['jack in the box', 'Jack in the Box'],
+  ['sonic', 'Sonic'],
+  ['arbys', "Arby's"], ['arby', "Arby's"],
+  ['carls jr', "Carl's Jr."],
+  ['hardees', "Hardee's"],
+  ['panda express', 'Panda Express'],
+  ['dairy queen', 'Dairy Queen'],
+  ['popeyes', 'Popeyes'],
+  ['whataburger', 'Whataburger'],
+  ['culvers', "Culver's"],
+  ['outback', 'Outback Steakhouse'],
+  ['texas roadhouse', 'Texas Roadhouse'],
+  ['red lobster', 'Red Lobster'],
+  ['cheesecake factory', 'The Cheesecake Factory'],
+  ['buffalo wild wings', 'Buffalo Wild Wings'],
+  ['dunkin', "Dunkin'"],
+  ['tim hortons', 'Tim Hortons'],
+  ['krispy kreme', 'Krispy Kreme'],
+  ['wingstop', 'Wingstop'],
+  ['qdoba', 'Qdoba'],
+  ['jersey mikes', "Jersey Mike's"], ['jersey mike', "Jersey Mike's"],
+  ['firehouse', 'Firehouse Subs'],
+  ['jimmy johns', "Jimmy John's"], ['jimmy john', "Jimmy John's"],
+  ['raising canes', "Raising Cane's"], ['raising cane', "Raising Cane's"],
+  ['zaxbys', "Zaxby's"], ['zaxby', "Zaxby's"],
+  ['el pollo loco', 'El Pollo Loco'],
+  ['sweetgreen', 'Sweetgreen'],
+  ['cava', 'Cava'],
+  ['shake shack', 'Shake Shack'],
+  ['pf changs', "P.F. Chang's"], ['p f chang', "P.F. Chang's"],
+];
+
+function detectRestaurant(query) {
+  if (!query) return null;
+  const q = ' ' + String(query).toLowerCase().trim() + ' ';
+  if (q.length < 4) return null;
+  for (const [keyword, display] of RESTAURANT_BRANDS) {
+    const padded = ' ' + keyword + ' ';
+    if (q.includes(padded)) return display;
+    if (q.startsWith(keyword + ' ') || q.endsWith(' ' + keyword)) return display;
+    if (q.trim() === keyword) return display;
+  }
+  return null;
+}
+
+// Hand-picked starter suggestions for offline / no-API-key use. Values are
+// approximations from each chain's published nutrition; intent is "lower
+// sodium, lower phosphorus additives, lean protein within reason." Encourage
+// users to verify on the chain's actual nutrition page before ordering.
+const RESTAURANT_FALLBACK_PICKS = {
+  "McDonald's": [
+    { item: 'Hamburger (small, no cheese), ask "no salt on patty"', why: 'Lowest-sodium burger build. Skipping cheese drops ~250 mg sodium and ~125 mg phosphorus.', kcal: 250, na: 510, pro: 12 },
+    { item: 'Grilled Chicken Sandwich, no cheese, light sauce — eat half', why: 'Grilled (not crispy) keeps Na lower; halving puts sodium under ~500 mg.', kcal: 220, na: 480, pro: 18 },
+    { item: 'Side Salad with Grilled Chicken, balsamic on the side', why: 'Skips the high-sodium bun and the cheese. Balsamic is the lowest-Na dressing option.', kcal: 220, na: 480, pro: 25 },
+    { item: 'Egg McMuffin, no cheese, no Canadian bacon (egg + English muffin only)', why: 'Stripping the meat + cheese cuts sodium roughly in half vs. the full sandwich.', kcal: 200, na: 350, pro: 9 },
+    { item: 'Apple slices + bottled water', why: 'Zero-sodium side and a clean fluid log entry.', kcal: 15, na: 0, pro: 0 },
+  ],
+  "Burger King": [
+    { item: 'Hamburger (no cheese, no pickles)', why: 'The simplest build. Skipping pickles drops ~150 mg sodium.', kcal: 240, na: 380, pro: 12 },
+    { item: 'Grilled Chicken Garden Salad, light Italian on the side', why: 'No bun + grilled chicken keeps sodium ~600 mg with dressing controlled.', kcal: 280, na: 620, pro: 25 },
+    { item: 'BK Veggie burger, no cheese, no mayo', why: 'Plant patty avoids phosphate-preserved meat additives; ditching mayo saves ~100 mg sodium.', kcal: 320, na: 700, pro: 15 },
+  ],
+  "Wendy's": [
+    { item: 'Jr. Hamburger, no cheese, plain', why: 'Smallest, leanest beef option. Plain (no ketchup/pickles) saves ~200 mg sodium.', kcal: 230, na: 430, pro: 13 },
+    { item: 'Apple Pecan Chicken Salad — half portion, dressing on the side', why: 'Grilled chicken + apples + pecans give protein and flavor without phosphate additives.', kcal: 280, na: 640, pro: 21 },
+    { item: 'Plain Baked Potato (skip cheese/sour cream/bacon)', why: 'Whole food vs. fries. ⚠ high potassium (~900 mg) — skip if your last K was >5.0.', kcal: 270, na: 25, pro: 7, note: 'Skip if your last potassium was >5.0 mEq/L.' },
+  ],
+  "Chick-fil-A": [
+    { item: 'Grilled Chicken Sandwich, no cheese, no sauce', why: 'Grilled (not breaded) cuts sodium ~30%. No cheese drops phosphorus.', kcal: 320, na: 680, pro: 28 },
+    { item: 'Grilled Nuggets (8-ct) + Side Salad, balsamic vinaigrette on the side', why: 'Pure lean protein + greens. Use half the dressing packet to manage Na.', kcal: 230, na: 660, pro: 28 },
+    { item: 'Fruit Cup (medium)', why: 'Clean side — no added sodium, low phosphorus, modest potassium.', kcal: 60, na: 0, pro: 1 },
+  ],
+  "Starbucks": [
+    { item: 'Tall (12 oz) brewed coffee, splash of half-and-half', why: 'No phosphate additives, no syrups. Avoid most non-dairy milks — they\'re fortified with phosphate additives.', kcal: 25, na: 10, pro: 1 },
+    { item: 'Tall Cappuccino with 2% milk', why: '~4 oz of milk → ~120 mg phosphorus + ~150 mg K. Keep to one per day.', kcal: 80, na: 70, pro: 6, note: 'Avoid oat/soy/almond milk — most are fortified with phosphate additives.' },
+    { item: 'Spinach, Feta & Egg White Wrap — eat half', why: 'Full wrap is 830 mg Na; half is reasonable. Higher protein, decent fiber.', kcal: 145, na: 415, pro: 10 },
+    { item: 'Plain Bagel with cream cheese on the side', why: 'Skip "everything" bagel (high Na). Smear half the cream cheese.', kcal: 350, na: 460, pro: 11 },
+  ],
+  "Taco Bell": [
+    { item: 'Power Menu Veggie Bowl, "Fresco style"', why: 'Fresco style swaps cheese/sauce for salsa — strips ~120 mg phosphorus and ~250 mg sodium per item.', kcal: 430, na: 990, pro: 12, note: 'Still high in sodium — eat the lightest other foods on this day.' },
+    { item: 'Crunchy Taco, Fresco style × 2', why: 'Two Fresco crunchy tacos are ~340 kcal / ~600 mg Na — among the lowest-Na meals on the menu.', kcal: 340, na: 600, pro: 12 },
+    { item: 'Black Beans (à la carte) + side of rice', why: 'Plant protein, fiber, no cheese or sauce. Watch portion — one serving each.', kcal: 240, na: 500, pro: 8 },
+  ],
+  "Subway": [
+    { item: '6" Veggie Delite on 9-grain wheat, no cheese, oil + vinegar', why: 'No deli meat = the single biggest sodium win at Subway. Cold-cut subs hit 1000–1500 mg easily.', kcal: 230, na: 280, pro: 8 },
+    { item: '6" Rotisserie-Style Chicken, no cheese, mustard, extra veggies', why: 'Rotisserie chicken is lower-Na than turkey or ham. Mustard < mayo < ranch for sodium.', kcal: 320, na: 580, pro: 26 },
+    { item: '6" Turkey, no cheese, oil + vinegar — eat half, save the rest', why: 'Half a turkey sub puts Na around 400–500 mg; the full one doubles that.', kcal: 140, na: 380, pro: 9 },
+  ],
+  "KFC": [
+    { item: 'Kentucky Grilled Chicken Breast (skin removed)', why: 'Grilled, not fried; removing skin cuts ~30% sodium and most of the saturated fat.', kcal: 130, na: 410, pro: 25 },
+    { item: 'Green Beans (side) + Corn on the Cob (small)', why: 'Two whole-food sides that come in well under 500 mg Na combined.', kcal: 130, na: 380, pro: 4 },
+  ],
+  "Chipotle": [
+    { item: 'Burrito Bowl: lettuce + brown rice + fajita veggies + chicken + mild salsa + guac; no cheese, no beans', why: 'Beans + cheese are the heaviest K/P hitters. Guac for healthy fat. Mild salsa < hot for sodium.', kcal: 550, na: 880, pro: 32 },
+    { item: 'Salad: greens + fajita veggies + sofritas + mild salsa + vinaigrette on the side', why: 'Sofritas (tofu) is lower-Na than barbacoa or carnitas. Vinaigrette is the lowest-Na dressing.', kcal: 420, na: 760, pro: 22 },
+  ],
+  "Panera Bread": [
+    { item: 'Half "You Pick Two": Caesar Salad (no cheese, dressing on side) + cup of Garden Vegetable soup', why: 'Garden Vegetable is one of the lower-Na soups (~700 mg cup). No-cheese Caesar shaves ~250 mg.', kcal: 360, na: 950, pro: 12 },
+    { item: 'Mediterranean Veggie Sandwich on whole grain — eat half', why: 'A half is ~340 kcal / ~640 mg Na. Pair with fruit for a reasonable lunch.', kcal: 340, na: 640, pro: 10 },
+  ],
+  "Olive Garden": [
+    { item: 'Garden-Fresh Salad (no croutons, no cheese), dressing on the side + grilled chicken add-on', why: 'Skip the breadsticks (~400 mg Na each). Croutons + cheese are the salad\'s sodium drivers.', kcal: 280, na: 720, pro: 28 },
+    { item: 'Herb-Grilled Salmon + steamed broccoli substitute', why: 'Salmon is omega-3 rich and naturally low-Na; sub steamed broccoli for the higher-Na default sides.', kcal: 460, na: 730, pro: 42 },
+  ],
+  "Pizza Hut": [
+    { item: 'Thin Crust Veggie Lover\'s, 1 slice (medium) + side salad', why: 'Thin crust is ~20% less Na than original/pan. Veggie toppings beat pepperoni/sausage by ~200 mg Na/slice.', kcal: 220, na: 530, pro: 9 },
+  ],
+  "Domino's": [
+    { item: 'Thin Crust cheese pizza, 1 slice (medium) + garden salad', why: 'Thin crust cuts Na ~25%; one slice keeps you under 500 mg from the pizza itself.', kcal: 200, na: 450, pro: 8 },
+  ],
+};
+
+function restaurantSlug(brand) {
+  return String(brand).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function loadRestaurantCache() {
+  try { return JSON.parse(localStorage.getItem(RESTAURANT_CACHE_KEY) || '{}'); }
+  catch { return {}; }
+}
+function saveRestaurantCache(c) {
+  try { localStorage.setItem(RESTAURANT_CACHE_KEY, JSON.stringify(c)); } catch {}
+}
+function getCachedRestaurantPicks(brand) {
+  const entry = loadRestaurantCache()[restaurantSlug(brand)];
+  if (!entry || !Array.isArray(entry.picks)) return null;
+  if (Date.now() - (entry.ts || 0) > RESTAURANT_CACHE_TTL_MS) return null;
+  return entry.picks;
+}
+function setCachedRestaurantPicks(brand, picks) {
+  const cache = loadRestaurantCache();
+  cache[restaurantSlug(brand)] = { ts: Date.now(), picks };
+  saveRestaurantCache(cache);
+}
+
+let restaurantFetchInFlight = null;
+let restaurantLastBrand = null;
+
+function numOrNull(v) {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function renderRestaurantSuggestions(brand) {
+  const wrap = document.getElementById('usda-restaurant-suggestions');
+  if (!wrap) return;
+  if (!brand) {
+    wrap.hidden = true;
+    wrap.innerHTML = '';
+    wrap.dataset.loaded = '';
+    restaurantLastBrand = null;
+    return;
+  }
+  if (restaurantLastBrand === brand && wrap.dataset.loaded === 'fresh') return;
+  restaurantLastBrand = brand;
+  wrap.hidden = false;
+
+  const cached = getCachedRestaurantPicks(brand);
+  const fallback = RESTAURANT_FALLBACK_PICKS[brand] || null;
+  const initial = cached || fallback;
+  const initialMode = cached ? 'cache' : (fallback ? 'static' : 'loading');
+  paintRestaurantSuggestions(brand, initial, initialMode);
+  wrap.dataset.loaded = cached ? 'fresh' : 'partial';
+  if (cached) return;
+
+  const advisor = loadAdvisorSettings();
+  if (!advisor.apiKey) {
+    if (!fallback) paintRestaurantSuggestions(brand, null, 'no-key');
+    return;
+  }
+
+  if (restaurantFetchInFlight && restaurantFetchInFlight.brand === brand) return;
+  restaurantFetchInFlight = { brand };
+  try {
+    const aiPicks = await fetchRestaurantPicksFromGemini(brand, advisor);
+    if (restaurantLastBrand !== brand) return;
+    if (aiPicks && aiPicks.length) {
+      setCachedRestaurantPicks(brand, aiPicks);
+      paintRestaurantSuggestions(brand, aiPicks, 'ai');
+      wrap.dataset.loaded = 'fresh';
+    }
+  } catch (err) {
+    if (restaurantLastBrand !== brand) return;
+    const note = document.createElement('div');
+    note.className = 'hint';
+    note.style.cssText = 'margin-top:6px;color:var(--bad)';
+    note.textContent = `AI picks unavailable: ${err.message}`;
+    wrap.appendChild(note);
+  } finally {
+    restaurantFetchInFlight = null;
+  }
+}
+
+function paintRestaurantSuggestions(brand, picks, mode) {
+  const wrap = document.getElementById('usda-restaurant-suggestions');
+  if (!wrap) return;
+  const advisor = loadAdvisorSettings();
+
+  const sourceLabel = {
+    ai: 'AI-generated for your CKD profile',
+    cache: 'Cached from a recent AI run',
+    static: 'Hand-picked starter list (add a Gemini key in Settings for AI picks)',
+    loading: 'Loading kidney-friendly picks…',
+    'no-key': 'Add a Gemini API key in Settings → Ask Advisor for personalized picks.',
+  }[mode] || '';
+
+  let body = '';
+  if (!picks || picks.length === 0) {
+    body = `<p class="hint" style="margin:6px 0 0">No kidney-friendly suggestions on file for ${escapeHtml(brand)} yet.</p>`;
+  } else {
+    body = picks.map(p => {
+      const stats = [];
+      if (p.kcal != null) stats.push(`${Math.round(p.kcal)} kcal`);
+      if (p.na != null) stats.push(`Na ${Math.round(p.na)}mg`);
+      if (p.k != null) stats.push(`K ${Math.round(p.k)}mg`);
+      if (p.p != null) stats.push(`P ${Math.round(p.p)}mg`);
+      if (p.pro != null) stats.push(`Pro ${Math.round(p.pro)}g`);
+      const statLine = stats.length ? `<div class="stats">${stats.join(' · ')}</div>` : '';
+      const why = p.why ? `<div class="serving" style="white-space:normal">${escapeHtml(p.why)}</div>` : '';
+      const note = p.note ? `<div class="hint" style="margin-top:4px;color:var(--warn)">${escapeHtml(p.note)}</div>` : '';
+      return `<div class="food-card restaurant-pick">
+        <div class="name">${escapeHtml(p.item || '')}</div>
+        ${why}
+        ${statLine}
+        ${note}
+      </div>`;
+    }).join('');
+  }
+
+  const refreshAttr = advisor.apiKey ? '' : 'disabled title="Add a Gemini API key in Settings to refresh"';
+  const refreshLabel = mode === 'loading' ? 'Loading…' : (mode === 'ai' || mode === 'cache' ? 'Refresh with AI' : 'Get AI picks');
+
+  wrap.innerHTML = `
+    <div class="restaurant-suggest-header">
+      <div>
+        <h3 style="margin:0">Kidney-friendly picks at ${escapeHtml(brand)}</h3>
+        <p class="hint" style="margin:4px 0 0">${escapeHtml(sourceLabel)}</p>
+      </div>
+      <button type="button" class="secondary" id="btn-restaurant-refresh" ${refreshAttr}>${escapeHtml(refreshLabel)}</button>
+    </div>
+    <p class="hint" style="margin:6px 0">Always double-check the chain's posted nutrition before ordering — recipes and sodium levels change.</p>
+    <div class="food-results restaurant-picks-grid">${body}</div>
+  `;
+
+  const refreshBtn = document.getElementById('btn-restaurant-refresh');
+  if (refreshBtn && advisor.apiKey) {
+    refreshBtn.addEventListener('click', () => {
+      const cache = loadRestaurantCache();
+      delete cache[restaurantSlug(brand)];
+      saveRestaurantCache(cache);
+      wrap.dataset.loaded = '';
+      restaurantLastBrand = null;
+      renderRestaurantSuggestions(brand);
+    });
+  }
+}
+
+async function fetchRestaurantPicksFromGemini(brand, advisorSettings) {
+  const weight = state.settings.weightLbs || 195;
+  const lastLab = state.labs[state.labs.length - 1];
+  const labContext = lastLab ? [
+    lastLab.egfr != null ? `eGFR ${lastLab.egfr}` : null,
+    lastLab.potassium != null ? `K ${lastLab.potassium} mEq/L` : null,
+    lastLab.phosphorus != null ? `P ${lastLab.phosphorus} mg/dL` : null,
+  ].filter(Boolean).join(', ') : 'no recent labs on file';
+
+  const systemPrompt = `You are a renal dietitian assistant. Given a chain restaurant, return 4–6 menu items most appropriate for a non-dialysis CKD stage 3–4 patient. Optimize for:
+- Sodium ≤ 600 mg per item where feasible
+- Lower phosphorus additives (avoid melted cheese, processed/deli meat, dark colas, phosphate-preserved chicken)
+- Lower potassium when the user's K is elevated (avoid big portions of potato, tomato sauce, beans, banana, oranges, dark leafy greens)
+- Reasonable lean protein 15–30 g per item
+- Realistic, orderable items — name them as they appear on the menu, including standard modifications ("no cheese", "Fresco style", "dressing on the side")
+
+Return ONLY valid JSON with this exact shape — no prose, no markdown:
+
+{
+  "picks": [
+    {
+      "item": "string — menu item with any modifications",
+      "why": "1 short sentence explaining the kidney benefit",
+      "kcal": number,
+      "na": number_sodium_mg,
+      "k": number_or_null_potassium_mg,
+      "p": number_or_null_phosphorus_mg,
+      "pro": number_protein_g,
+      "note": "optional one-line caution or null"
+    }
+  ]
+}
+
+Use null for any value not reliably known. Values should reflect the item AS ORDERED with the modifications you specified.`;
+
+  const userPrompt = `Patient context: ${weight} lbs, CKD stage 3b trending toward stage 4, last labs ${labContext}. Daily targets: sodium ${state.settings.sodiumTarget} mg, potassium ${state.settings.potassiumTarget} mg, phosphorus ${state.settings.phosphorusTarget} mg, protein ${state.settings.proteinTarget} g.
+
+Restaurant: ${brand}
+
+Return 4–6 kidney-friendly menu picks as JSON.`;
+
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(advisorSettings.model)}:generateContent`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': advisorSettings.apiKey,
+    },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+      generationConfig: {
+        maxOutputTokens: 2048,
+        responseMimeType: 'application/json',
+      },
+    }),
+  });
+  if (!res.ok) {
+    let msg = `${res.status} ${res.statusText}`;
+    try {
+      const j = JSON.parse(await res.text());
+      if (j.error && j.error.message) msg = j.error.message;
+    } catch {}
+    throw new Error(msg);
+  }
+  const data = await res.json();
+  const u = data.usageMetadata || {};
+  const cached = u.cachedContentTokenCount || 0;
+  const usage = loadAdvisorUsage();
+  usage.input += (u.promptTokenCount || 0) - cached;
+  usage.output += u.candidatesTokenCount || 0;
+  usage.cacheRead += cached;
+  usage.requests += 1;
+  saveAdvisorUsage(usage);
+
+  const text = ((data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts || [])
+    .map(p => p.text || '').join('')).trim();
+  let jsonStr = text;
+  const fence = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) jsonStr = fence[1].trim();
+  let parsed;
+  try { parsed = JSON.parse(jsonStr); }
+  catch { throw new Error('AI returned invalid JSON'); }
+  if (!parsed || !Array.isArray(parsed.picks)) return null;
+  return parsed.picks.slice(0, 8).map(p => ({
+    item: String(p.item || '').slice(0, 200),
+    why: String(p.why || '').slice(0, 400),
+    kcal: numOrNull(p.kcal),
+    na: numOrNull(p.na),
+    k: numOrNull(p.k),
+    p: numOrNull(p.p),
+    pro: numOrNull(p.pro),
+    note: p.note ? String(p.note).slice(0, 200) : null,
+  })).filter(p => p.item);
+}
 
 const usdaKeyForm = document.getElementById('usda-key-form');
 if (usdaKeyForm) {

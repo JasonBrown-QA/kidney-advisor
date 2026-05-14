@@ -477,6 +477,45 @@ tbody tr:hover { background: var(--surface-2); }
   gap: 8px;
 }
 
+/* ─── Restaurant kidney-friendly picks ─────────────────── */
+.restaurant-suggest-panel {
+  background: linear-gradient(180deg, #ecf7f1 0%, #ffffff 100%);
+  border: 1px solid #bcdfcb;
+  border-radius: var(--radius-sm);
+  padding: 12px 12px 10px;
+  margin: 0 0 12px;
+}
+.restaurant-suggest-panel[hidden] { display: none; }
+.restaurant-suggest-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.restaurant-suggest-header h3 {
+  color: #1e6b2a;
+  font-size: 15px;
+}
+.restaurant-picks-grid {
+  max-height: none;
+  margin-top: 8px;
+}
+.food-card.restaurant-pick {
+  background: white;
+  border-color: #bcdfcb;
+  cursor: default;
+}
+.food-card.restaurant-pick:hover {
+  background: white;
+  border-color: #2f8a3e;
+}
+.food-card.restaurant-pick .name {
+  font-size: 14px;
+  color: #1e6b2a;
+  margin-bottom: 4px;
+}
+
 /* ─── Food results ─────────────────────────────────────── */
 .food-results {
   display: grid;
