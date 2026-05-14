@@ -1606,6 +1606,66 @@ function numOrNull(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+// Tolerant JSON extractor for LLM responses. Tries, in order:
+//   1. Direct JSON.parse on the trimmed string
+//   2. Strip a ```json … ``` fence and retry
+//   3. Slice from the first '{' to the last '}' and retry
+//   4. Same slice with smart-quotes flattened to straight quotes
+//   5. Same slice with a trailing-comma fixup (",}" → "}", ",]" → "]")
+//   6. As a last resort for MAX_TOKENS truncation, walk back through the
+//      string trimming the tail until a substring parses cleanly
+// Returns the parsed value, or null if nothing works.
+function tryParseJSONLoose(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const attempts = [];
+  attempts.push(raw.trim());
+
+  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) attempts.push(fence[1].trim());
+
+  const first = raw.indexOf('{');
+  const last = raw.lastIndexOf('}');
+  if (first !== -1 && last > first) {
+    const slice = raw.slice(first, last + 1);
+    attempts.push(slice);
+    attempts.push(slice.replace(/[‘’‚‛]/g, "'").replace(/[“”„‟]/g, '"'));
+    attempts.push(slice.replace(/,(\s*[}\]])/g, '$1'));
+  }
+
+  for (const s of attempts) {
+    try { return JSON.parse(s); } catch {}
+  }
+
+  // Truncation recovery: walk the tail back to find the longest parsable
+  // prefix that ends on a balanced brace. Only kicks in if we have a clear
+  // opening '{' to anchor on.
+  if (first !== -1) {
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    let lastBalancedEnd = -1;
+    for (let i = first; i < raw.length; i++) {
+      const ch = raw[i];
+      if (inStr) {
+        if (esc) { esc = false; continue; }
+        if (ch === '\\') { esc = true; continue; }
+        if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') { inStr = true; continue; }
+      if (ch === '{' || ch === '[') depth++;
+      else if (ch === '}' || ch === ']') {
+        depth--;
+        if (depth === 0) lastBalancedEnd = i;
+      }
+    }
+    if (lastBalancedEnd > first) {
+      try { return JSON.parse(raw.slice(first, lastBalancedEnd + 1)); } catch {}
+    }
+  }
+  return null;
+}
+
 async function renderRestaurantSuggestions(brand) {
   const wrap = document.getElementById('usda-restaurant-suggestions');
   if (!wrap) return;
@@ -1771,7 +1831,11 @@ Return 4–6 kidney-friendly menu picks as JSON.`;
       systemInstruction: { parts: [{ text: systemPrompt }] },
       contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
       generationConfig: {
-        maxOutputTokens: 2048,
+        // Bumped from 2048 — when the model writes longer `why` strings,
+        // 4–6 picks routinely overflowed 2048 and got truncated mid-array,
+        // surfacing as "AI returned invalid JSON".
+        maxOutputTokens: 4096,
+        temperature: 0.4,
         responseMimeType: 'application/json',
       },
     }),
@@ -1794,14 +1858,28 @@ Return 4–6 kidney-friendly menu picks as JSON.`;
   usage.requests += 1;
   saveAdvisorUsage(usage);
 
-  const text = ((data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts || [])
-    .map(p => p.text || '').join('')).trim();
-  let jsonStr = text;
-  const fence = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fence) jsonStr = fence[1].trim();
-  let parsed;
-  try { parsed = JSON.parse(jsonStr); }
-  catch { throw new Error('AI returned invalid JSON'); }
+  const cand = (data.candidates && data.candidates[0]) || null;
+  const finishReason = cand && cand.finishReason || 'UNKNOWN';
+  const parts = (cand && cand.content && cand.content.parts) || [];
+  const text = parts.map(p => p.text || '').join('').trim();
+
+  // Log raw response so it survives the visible error toast for inspection.
+  console.log('[restaurant-picks] Gemini response', { finishReason, text, raw: data });
+
+  if (!text) {
+    if (finishReason === 'SAFETY') throw new Error('Gemini blocked the response (safety filter)');
+    if (finishReason === 'MAX_TOKENS') throw new Error('Hit token cap before any JSON was produced — try again');
+    throw new Error(`No content returned (finish: ${finishReason})`);
+  }
+
+  let parsed = tryParseJSONLoose(text);
+  if (!parsed) {
+    const snippet = text.slice(0, 200).replace(/\s+/g, ' ');
+    if (finishReason === 'MAX_TOKENS') {
+      throw new Error(`Gemini ran out of tokens mid-JSON — try again (got: ${snippet}…)`);
+    }
+    throw new Error(`Could not parse JSON (finish: ${finishReason}, got: ${snippet}…)`);
+  }
   if (!parsed || !Array.isArray(parsed.picks)) return null;
   return parsed.picks.slice(0, 8).map(p => ({
     item: String(p.item || '').slice(0, 200),

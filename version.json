@@ -1,4 +1,4 @@
 {
-  "build": "20260514-1830",
-  "summary": "CKD-tuned diet targets for Jason's profile + restaurant kidney-friendly picks"
+  "build": "20260514-1915",
+  "summary": "Robust JSON parsing for restaurant AI picks (truncation recovery + better errors)"
 }
