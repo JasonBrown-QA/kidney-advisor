@@ -37,6 +37,7 @@ const DEFAULT_SETTINGS = {
   carbsTarget: 275,
   fatTarget: 73,
   fiberTarget: 30,
+  stepsTarget: 8000,
   bpSys: 130,
   bpDia: 80,
   settingsProfileVersion: 1,
@@ -124,6 +125,7 @@ function blankState() {
     meds: [],
     medLog: {},
     diet: [],
+    steps: [],
     symptoms: [],
     questions: [],
     visit: { date: '', provider: '', notes: '' },
@@ -195,9 +197,59 @@ function migrateUtcShiftedDates() {
   return fixed;
 }
 
+// All display timestamps render in Arizona time (America/Phoenix, UTC-7 year-round,
+// no DST). Forcing the tz means cloud-sync status, lab dates, briefings, etc.
+// stay correct even if the user opens the app from a device set to another
+// timezone (e.g. travel, a borrowed laptop).
+const PHOENIX_TZ = 'America/Phoenix';
+
+const phx = {
+  // Full datetime, MM/DD/YYYY, h:mm AM/PM AZ
+  datetime: (input) => {
+    if (input == null || input === '') return '';
+    const d = input instanceof Date ? input : new Date(input);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleString('en-US', { timeZone: PHOENIX_TZ, dateStyle: 'short', timeStyle: 'short' });
+  },
+  // Short month + day + 12-hour time
+  short: (input) => {
+    if (input == null || input === '') return '';
+    const d = input instanceof Date ? input : new Date(input);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleString('en-US', { timeZone: PHOENIX_TZ, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  },
+  // Date only (no time)
+  date: (input) => {
+    if (input == null || input === '') return '';
+    const d = input instanceof Date ? input : new Date(input);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleDateString('en-US', { timeZone: PHOENIX_TZ });
+  },
+  // Weekday + month + day (no time, no year)
+  dateLong: (input) => {
+    if (input == null || input === '') return '';
+    const d = input instanceof Date ? input : new Date(input);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleDateString('en-US', { timeZone: PHOENIX_TZ, weekday: 'short', month: 'short', day: 'numeric' });
+  },
+  // Today's date as YYYY-MM-DD in Phoenix tz (independent of device tz)
+  isoToday: () => {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: PHOENIX_TZ, year: 'numeric', month: '2-digit', day: '2-digit' })
+      .formatToParts(new Date());
+    const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
+    return `${map.year}-${map.month}-${map.day}`;
+  },
+};
+
 const fmt = {
-  date: iso => iso ? new Date(iso + (iso.length === 10 ? 'T00:00:00' : '')).toLocaleDateString() : '',
-  dt:   iso => iso ? new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '',
+  // Bare YYYY-MM-DD dates: parse as midnight Phoenix so we don't accidentally
+  // wrap to the prior day in UTC. Then render in Phoenix tz.
+  date: iso => {
+    if (!iso) return '';
+    if (iso.length === 10) return phx.date(iso + 'T00:00:00-07:00');
+    return phx.date(iso);
+  },
+  dt:   iso => iso ? phx.short(iso) : '',
   num:  (v, d = 1) => (v === null || v === undefined || v === '') ? '—' : Number(v).toFixed(d),
 };
 
@@ -551,11 +603,111 @@ function sumDietTotals(entries) {
   }, { calories: 0, carbs: 0, fat: 0, fiber: 0, protein: 0, sodium: 0, potassium: 0, phosphorus: 0, fluids: 0 });
 }
 
+// ─── Steps tracking ──────────────────────────────────────────────────────
+// `state.steps` is an array of { id, date, steps, source, time }.
+//   - source='manual': additive (user logs +500 walking around)
+//   - source='shortcut' or 'healthkit': CUMULATIVE for the day (Apple Watch
+//     reports total day-so-far). When a sync arrives, we drop any existing
+//     non-manual entries for that date and push the new authoritative value.
+//   - For the day total: if any sync entry exists for the date, prefer the
+//     highest sync value (latest cumulative); otherwise sum the manuals.
+//     This way users can do quick manual logs early, then a single Apple
+//     Watch sync rolls up everything without double-counting.
+function totalStepsForDate(dateStr) {
+  if (!Array.isArray(state.steps)) return 0;
+  const dayEntries = state.steps.filter(s => s.date === dateStr);
+  if (!dayEntries.length) return 0;
+  const syncEntries = dayEntries.filter(s => s.source !== 'manual');
+  if (syncEntries.length) {
+    return Math.max(...syncEntries.map(s => Number(s.steps) || 0));
+  }
+  return dayEntries.reduce((sum, s) => sum + (Number(s.steps) || 0), 0);
+}
+
+function logSteps(count, opts = {}) {
+  count = Math.round(Number(count));
+  if (!count || isNaN(count) || count < 0) return;
+  const date = opts.date || todayISO();
+  const source = opts.source || 'manual';
+  if (!Array.isArray(state.steps)) state.steps = [];
+  if (source !== 'manual') {
+    // Drop earlier sync entries for this date; the new sync is authoritative.
+    state.steps = state.steps.filter(s => !(s.date === date && s.source !== 'manual'));
+  }
+  state.steps.push({
+    id: uid(),
+    date,
+    steps: count,
+    source,
+    time: new Date().toISOString(),
+  });
+  state.steps.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  save();
+  if (!opts.skipRender) renderAll();
+  return count;
+}
+
+// Render the dedicated Steps card on the Dashboard.
+function renderStepsCard() {
+  const today = todayISO();
+  const total = totalStepsForDate(today);
+  const target = state.settings.stepsTarget || 8000;
+  const pct = target > 0 ? Math.min(100, (total / target) * 100) : 0;
+  const remaining = Math.max(0, target - total);
+
+  const countEl = document.getElementById('steps-today-count');
+  const targetEl = document.getElementById('steps-today-target');
+  const barEl = document.getElementById('steps-today-bar');
+  const remainEl = document.getElementById('steps-today-remaining');
+  const statusEl = document.getElementById('steps-source-status');
+
+  if (!countEl) return; // dashboard not rendered yet
+
+  countEl.textContent = total.toLocaleString();
+  if (targetEl) targetEl.textContent = target.toLocaleString();
+  if (barEl) {
+    barEl.style.width = pct + '%';
+    barEl.className = 'steps-progress-fill' + (pct >= 100 ? ' done' : pct >= 50 ? ' mid' : '');
+  }
+  if (remainEl) {
+    remainEl.textContent = pct >= 100
+      ? `🎉 +${(total - target).toLocaleString()} over target`
+      : `${remaining.toLocaleString()} steps to go`;
+  }
+
+  if (statusEl) {
+    if (!Array.isArray(state.steps)) state.steps = [];
+    const todays = state.steps.filter(s => s.date === today);
+    if (!todays.length) {
+      statusEl.innerHTML = '<span class="steps-source-empty">No entries yet today — quick-log below or sync from Apple Watch.</span>';
+    } else {
+      const sorted = [...todays].sort((a, b) => (b.time || '').localeCompare(a.time || ''));
+      const latest = sorted[0];
+      const srcLabel = latest.source === 'shortcut' ? 'Apple Watch (Shortcut)'
+                     : latest.source === 'healthkit' ? 'Apple Health import'
+                     : latest.source === 'url' ? 'URL sync'
+                     : 'Manual';
+      const manualCount = todays.filter(s => s.source === 'manual').length;
+      const syncCount = todays.filter(s => s.source !== 'manual').length;
+      const breakdown = syncCount
+        ? `<span class="steps-tag steps-tag-sync">${syncCount} sync</span>`
+        : '';
+      const manuals = manualCount
+        ? `<span class="steps-tag steps-tag-manual">${manualCount} manual</span>`
+        : '';
+      statusEl.innerHTML = `Latest: <strong>${Number(latest.steps).toLocaleString()}</strong> via ${escapeHtml(srcLabel)} · ${escapeHtml(phx.short(latest.time))} AZ ${breakdown} ${manuals}`;
+    }
+  }
+}
+
 function renderDietBars(container) {
   const today = todayISO();
   const todays = state.diet.filter(d => d.date === today);
   const totals = sumDietTotals(todays);
+  const stepsToday = totalStepsForDate(today);
 
+  // Steps treat "over target" as good (the more, the better) — invert the
+  // color logic vs nutritional limits where over-target is a problem.
   const bars = [
     { key: 'calories',   label: 'Calories',   unit: 'kcal', target: state.settings.caloriesTarget,   value: totals.calories },
     { key: 'carbs',      label: 'Carbs',      unit: 'g',  target: state.settings.carbsTarget,      value: totals.carbs },
@@ -566,20 +718,28 @@ function renderDietBars(container) {
     { key: 'potassium',  label: 'Potassium',  unit: 'mg', target: state.settings.potassiumTarget,  value: totals.potassium },
     { key: 'phosphorus', label: 'Phosphorus', unit: 'mg', target: state.settings.phosphorusTarget, value: totals.phosphorus },
     { key: 'fluids',     label: 'Fluids',     unit: 'oz', target: state.settings.fluidTarget,      value: totals.fluids },
+    { key: 'steps',      label: 'Steps',      unit: '',   target: state.settings.stepsTarget || 8000, value: stepsToday, invert: true },
   ];
 
   container.innerHTML = bars.map(b => {
     const pct = b.target > 0 ? Math.min(100, (b.value / b.target) * 100) : 0;
-    const cls = pct >= 100 ? 'bad' : pct >= 80 ? 'warn' : '';
+    let cls;
+    if (b.invert) {
+      cls = pct >= 100 ? '' : pct >= 50 ? 'warn' : 'bad';
+    } else {
+      cls = pct >= 100 ? 'bad' : pct >= 80 ? 'warn' : '';
+    }
+    const displayValue = b.key === 'steps' ? Math.round(b.value).toLocaleString() : Math.round(b.value);
+    const displayTarget = b.key === 'steps' ? Number(b.target).toLocaleString() : b.target;
     return `<div class="diet-bar">
       <div class="diet-bar-label">${b.label}</div>
       <div class="diet-bar-track"><div class="diet-bar-fill ${cls}" style="width:${pct}%"></div></div>
-      <div class="diet-bar-value">${Math.round(b.value)} / ${b.target} ${b.unit}</div>
+      <div class="diet-bar-value">${displayValue} / ${displayTarget}${b.unit ? ' ' + b.unit : ''}</div>
     </div>`;
   }).join('');
 
   const todayLabel = document.getElementById('diet-today-label');
-  if (todayLabel) todayLabel.textContent = new Date(today + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  if (todayLabel) todayLabel.textContent = phx.dateLong(today + 'T00:00:00-07:00');
 
   const actions = document.getElementById('today-totals-actions');
   if (actions) actions.hidden = todays.length === 0;
@@ -617,13 +777,19 @@ function renderDietHistory() {
     (byDate[d.date] = byDate[d.date] || []).push(d);
   }
   const dates = Object.keys(byDate).sort().reverse();
-  if (countEl) countEl.textContent = dates.length ? `${dates.length} day${dates.length === 1 ? '' : 's'}` : '';
 
-  if (!dates.length) {
-    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--text-muted)">No previous days logged yet.</td></tr>`;
+  // Collect all dates with either diet or step entries (skip today)
+  const stepDays = new Set((state.steps || []).filter(s => s.date && s.date !== today).map(s => s.date));
+  const allDates = new Set([...dates, ...stepDays]);
+  const datesAll = [...allDates].sort().reverse();
+
+  if (!datesAll.length) {
+    tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;color:var(--text-muted)">No previous days logged yet.</td></tr>`;
     if (detail) { detail.hidden = true; detail.innerHTML = ''; }
+    if (countEl) countEl.textContent = '';
     return;
   }
+  if (countEl) countEl.textContent = `${datesAll.length} day${datesAll.length === 1 ? '' : 's'}`;
 
   // Build per-day totals + over-target markers.
   const targets = {
@@ -636,15 +802,24 @@ function renderDietHistory() {
     potassium: state.settings.potassiumTarget,
     phosphorus: state.settings.phosphorusTarget,
     fluids: state.settings.fluidTarget,
+    steps: state.settings.stepsTarget || 8000,
   };
   const cell = (val, target, decimals = 0) => {
     const v = Math.round(val);
     const cls = target > 0 && val >= target ? 'warn' : '';
     return `<td class="${cls}">${decimals > 0 ? val.toFixed(decimals) : v}</td>`;
   };
+  // Steps: hit-target is GOOD (not warn). Render with comma-thousands.
+  const stepsCell = (val, target) => {
+    const v = Math.round(val);
+    const cls = target > 0 && val >= target ? 'good' : '';
+    return `<td class="${cls}">${v.toLocaleString()}</td>`;
+  };
 
-  tbody.innerHTML = dates.map(date => {
-    const t = sumDietTotals(byDate[date]);
+  tbody.innerHTML = datesAll.map(date => {
+    const dayDiet = byDate[date] || [];
+    const t = sumDietTotals(dayDiet);
+    const stepsT = totalStepsForDate(date);
     return `<tr data-history-date="${date}" style="cursor:pointer">
       <td>${fmt.date(date)}</td>
       ${cell(t.calories, targets.calories)}
@@ -656,6 +831,7 @@ function renderDietHistory() {
       ${cell(t.potassium, targets.potassium)}
       ${cell(t.phosphorus, targets.phosphorus)}
       ${cell(t.fluids, targets.fluids, 1)}
+      ${stepsCell(stepsT, targets.steps)}
     </tr>`;
   }).join('');
 
@@ -2541,6 +2717,7 @@ document.getElementById('bp-quick-form').addEventListener('submit', e => {
 
 function renderDiet() {
   renderDietBars(document.getElementById('diet-bars'));
+  renderStepsCard();
   renderDietHistory();
 
   const today = todayISO();
@@ -2787,6 +2964,74 @@ document.getElementById('btn-clear').addEventListener('click', () => {
 
 const btnMoveToday = document.getElementById('btn-move-today-to-yesterday');
 if (btnMoveToday) btnMoveToday.addEventListener('click', moveTodayEntriesToYesterday);
+
+// ─── Steps card event wiring ─────────────────────────────────────────────
+function wireStepsCard() {
+  const card = document.getElementById('steps-card');
+  if (!card) return;
+
+  // Quick-add chips
+  card.querySelectorAll('[data-steps-add]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const n = parseInt(btn.dataset.stepsAdd, 10);
+      if (n > 0) {
+        logSteps(n, { source: 'manual' });
+        flash(`+${n.toLocaleString()} steps logged`);
+      }
+    });
+  });
+
+  // Custom add (additive)
+  const customForm = document.getElementById('steps-custom-form');
+  if (customForm) {
+    customForm.addEventListener('submit', e => {
+      e.preventDefault();
+      const input = document.getElementById('steps-custom-input');
+      const n = parseInt(input.value, 10);
+      if (!n || n <= 0) { flash('Enter a step count greater than 0.'); return; }
+      logSteps(n, { source: 'manual' });
+      input.value = '';
+      flash(`+${n.toLocaleString()} steps logged`);
+    });
+  }
+
+  // Set today's total (replaces sync entries)
+  const setTotalForm = document.getElementById('steps-set-total-form');
+  if (setTotalForm) {
+    setTotalForm.addEventListener('submit', e => {
+      e.preventDefault();
+      const input = document.getElementById('steps-set-total-input');
+      const n = parseInt(input.value, 10);
+      if (!n || n < 0) { flash('Enter a step count.'); return; }
+      logSteps(n, { source: 'shortcut' });
+      input.value = '';
+      flash(`Today's total set to ${n.toLocaleString()} steps`);
+    });
+  }
+
+  // Apple Health file picker
+  const healthBtn = document.getElementById('btn-steps-health-pick');
+  const healthFile = document.getElementById('steps-health-file');
+  if (healthBtn && healthFile) {
+    healthBtn.addEventListener('click', () => healthFile.click());
+    healthFile.addEventListener('change', e => {
+      const file = e.target.files && e.target.files[0];
+      if (file) handleAppleHealthFile(file);
+      healthFile.value = '';
+    });
+  }
+
+  // Shortcut URL generator
+  const btnShortcutUrl = document.getElementById('btn-steps-shortcut-copy');
+  if (btnShortcutUrl) {
+    btnShortcutUrl.addEventListener('click', async () => {
+      const base = (location.origin && !location.origin.startsWith('file')) ? (location.origin + location.pathname) : 'https://jasonbrown-qa.github.io/kidney-advisor/';
+      const example = base + '?steps=8542';
+      const ok = await copyToClipboard(example);
+      flash(ok ? 'Example URL copied — replace 8542 with your Shortcut\'s [Steps] variable' : 'Could not copy automatically');
+    });
+  }
+}
 
 document.getElementById('btn-paste-import').addEventListener('click', async () => {
   const raw = document.getElementById('paste-import-text').value.trim();
@@ -3984,6 +4229,8 @@ async function init() {
   setTimeout(checkReminders, 5000);
 
   checkHashImport().catch(err => console.error('Hash import error', err));
+  checkStepsURLParam();
+  wireStepsCard();
   setupPullToRefresh();
   renderCloudSyncUI();
 
@@ -4002,6 +4249,9 @@ async function init() {
   let lastVisibilityPull = 0;
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
+    // iOS Shortcut may "Open URLs" with ?steps=N into the already-running PWA
+    // window without a full reload — re-scan on every refocus.
+    checkStepsURLParam();
     // Always check for new code first — if there's an update we'll reload
     // before doing the sync, so the post-reload code does the sync fresh.
     checkForUpdate();
@@ -4140,6 +4390,125 @@ async function checkHashImport() {
       alert('Import failed: ' + e.message);
     }
   }, 200);
+}
+
+// ─── Steps URL sync (iOS Shortcuts / Apple Watch) ────────────────────────
+// An iOS Shortcut can fetch today's step count from HealthKit and open this
+// URL: https://jasonbrown-qa.github.io/kidney-advisor/?steps=8542
+// Also accepts &date=YYYY-MM-DD (defaults to today) and a batch form
+// ?steps_batch=2026-05-15:7821,2026-05-14:9102
+// The query is stripped immediately after import so a refresh doesn't re-add.
+function checkStepsURLParam() {
+  const params = new URLSearchParams(location.search);
+  const single = params.get('steps');
+  const batch = params.get('steps_batch');
+  if (!single && !batch) return;
+
+  let imported = 0;
+  if (batch) {
+    for (const piece of batch.split(',')) {
+      const [date, count] = piece.split(':');
+      if (!date || !count) continue;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date.trim())) continue;
+      const n = Math.round(Number(count));
+      if (!n || n < 0) continue;
+      logSteps(n, { date: date.trim(), source: 'shortcut', skipRender: true });
+      imported++;
+    }
+  }
+  if (single) {
+    const date = params.get('date') || todayISO();
+    const n = Math.round(Number(single));
+    if (n > 0) {
+      logSteps(n, { date, source: 'shortcut', skipRender: true });
+      imported++;
+    }
+  }
+  // Strip steps params from the URL so a refresh doesn't re-import.
+  params.delete('steps');
+  params.delete('steps_batch');
+  params.delete('date');
+  const qs = params.toString();
+  history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+
+  if (imported) {
+    renderAll();
+    flash(`Synced ${imported} step entr${imported === 1 ? 'y' : 'ies'} from Shortcut`);
+  }
+}
+
+// ─── Apple Health export.xml import (steps backfill) ─────────────────────
+// Reads HKQuantityTypeIdentifierStepCount records, groups by Phoenix-local
+// date (using startDate), sums per day, and records each day as a single
+// source='healthkit' entry (which replaces any prior sync for that date).
+// Manual entries on the same day remain.
+function parseAppleHealthXML(xmlText) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlText, 'application/xml');
+  const parseErr = doc.querySelector('parsererror');
+  if (parseErr) throw new Error('Could not parse export.xml — file may be corrupt.');
+
+  const records = doc.querySelectorAll('Record[type="HKQuantityTypeIdentifierStepCount"]');
+  if (!records.length) throw new Error('No StepCount records found in export.xml. Make sure you exported from Apple Health (Health app → profile → Export All Health Data).');
+
+  // Convert each record's startDate to a Phoenix-local YYYY-MM-DD and sum.
+  const byDate = new Map();
+  records.forEach(rec => {
+    const start = rec.getAttribute('startDate');
+    const valueStr = rec.getAttribute('value');
+    const value = Number(valueStr);
+    if (!start || !Number.isFinite(value) || value <= 0) return;
+    // Apple Health dates look like "2026-05-15 09:23:11 -0700". JS Date parses this fine.
+    const d = new Date(start);
+    if (isNaN(d.getTime())) return;
+    // Format date in Phoenix tz
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: PHOENIX_TZ, year: 'numeric', month: '2-digit', day: '2-digit' })
+      .formatToParts(d);
+    const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
+    const dateKey = `${map.year}-${map.month}-${map.day}`;
+    byDate.set(dateKey, (byDate.get(dateKey) || 0) + value);
+  });
+  return byDate;
+}
+
+async function handleAppleHealthFile(file) {
+  const status = document.getElementById('steps-health-status');
+  const setStatus = (msg, kind = '') => { if (status) { status.textContent = msg; status.dataset.kind = kind; } };
+  setStatus('Reading file…');
+  try {
+    let xmlText;
+    if (file.name.toLowerCase().endsWith('.zip')) {
+      setStatus('ZIP archives need to be unzipped first. Extract export.xml from the ZIP, then upload that .xml file directly.', 'bad');
+      return;
+    }
+    xmlText = await file.text();
+    setStatus('Parsing step records…');
+    const byDate = parseAppleHealthXML(xmlText);
+    if (!byDate.size) { setStatus('No step records found in the file.', 'bad'); return; }
+
+    // Limit to most recent 365 days to keep the data set manageable.
+    const today = todayISO();
+    const cutoff = new Date(today + 'T00:00:00-07:00');
+    cutoff.setDate(cutoff.getDate() - 365);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+    const eligible = [...byDate.entries()].filter(([date]) => date >= cutoffStr);
+    if (!eligible.length) { setStatus('No step records in the last 365 days.', 'bad'); return; }
+
+    const totalRecords = eligible.reduce((sum, [, v]) => sum + v, 0);
+    const ok = confirm(`Import ${eligible.length} days of step data (${Math.round(totalRecords).toLocaleString()} total steps from the last 365 days)? This replaces existing Apple-Watch-sourced entries for those dates; manual entries are kept.`);
+    if (!ok) { setStatus('Import cancelled.'); return; }
+
+    for (const [date, count] of eligible) {
+      logSteps(Math.round(count), { date, source: 'healthkit', skipRender: true });
+    }
+    renderAll();
+    setStatus(`Imported ${eligible.length} days · ${Math.round(totalRecords).toLocaleString()} total steps.`, 'good');
+    flash(`Imported ${eligible.length} days of steps from Apple Health`);
+  } catch (err) {
+    console.error('Health import failed', err);
+    setStatus('Import failed: ' + (err.message || String(err)), 'bad');
+  }
 }
 
 // Gzip/base64 helpers using built-in CompressionStream (Safari 16.4+, 2023+)
@@ -4292,7 +4661,7 @@ async function cloudPullIfNewer({ prompt = true } = {}) {
     return { pulled: false, reason: 'local-up-to-date', remoteTime, localTime };
   }
   if (prompt) {
-    const when = remoteTime ? new Date(remoteTime).toLocaleString() : 'unknown time';
+    const when = remoteTime ? phx.datetime(remoteTime) : 'unknown time';
     if (!confirm('Cloud has newer data (saved ' + when + '). Replace local data with the cloud copy?')) {
       return { pulled: false, reason: 'user-declined' };
     }
@@ -4322,12 +4691,12 @@ async function cloudSyncNow({ prompt = false } = {}) {
     const localTime = state.lastModified || 0;
 
     if (remote && remoteTime > localTime + 1000) {
-      if (!prompt || confirm('Cloud has newer data (' + new Date(remoteTime).toLocaleString() + '). Pull from cloud and replace local?')) {
+      if (!prompt || confirm('Cloud has newer data (' + phx.datetime(remoteTime) + ' AZ). Pull from cloud and replace local?')) {
         state = mergeState(remote);
         migrateUtcShiftedDates();
         save({ skipCloud: true });
         renderAll();
-        setCloudStatus('Pulled from cloud · ' + new Date(remoteTime).toLocaleString());
+        setCloudStatus('Pulled from cloud · ' + phx.datetime(remoteTime) + ' AZ');
         return { direction: 'pull' };
       }
       setCloudStatus('Pull declined — local kept');
@@ -4340,7 +4709,7 @@ async function cloudSyncNow({ prompt = false } = {}) {
         files: { [GIST_FILENAME]: { content: JSON.stringify(state, null, 2) } },
       }),
     });
-    setCloudStatus('Pushed to cloud · ' + new Date(state.lastModified || Date.now()).toLocaleString());
+    setCloudStatus('Pushed to cloud · ' + phx.datetime(state.lastModified || Date.now()) + ' AZ');
     return { direction: 'push' };
   } catch (e) {
     setCloudStatus('Sync failed: ' + e.message);
@@ -4355,7 +4724,7 @@ function scheduleCloudPush() {
   clearTimeout(cloudSyncTimer);
   cloudSyncTimer = setTimeout(() => {
     cloudPush().then(() => {
-      setCloudStatus('Auto-saved to cloud · ' + new Date().toLocaleString());
+      setCloudStatus('Auto-saved to cloud · ' + phx.datetime(Date.now()) + ' AZ');
     }).catch(e => {
       setCloudStatus('Auto-save failed: ' + e.message);
     });
@@ -4399,7 +4768,7 @@ document.getElementById('btn-cloud-force-pull').addEventListener('click', async 
     migrateUtcShiftedDates();
     save({ skipCloud: true });
     renderAll();
-    const remoteTime = remote.lastModified ? new Date(remote.lastModified).toLocaleString() : 'unknown';
+    const remoteTime = remote.lastModified ? (phx.datetime(remote.lastModified) + ' AZ') : 'unknown';
     setCloudStatus('Force-pulled · cloud version from ' + remoteTime);
     flash('Pulled from cloud');
   } catch (e) {
@@ -4412,7 +4781,7 @@ document.getElementById('btn-cloud-force-push').addEventListener('click', async 
   setCloudStatus('Force-pushing…');
   try {
     await cloudPush();
-    setCloudStatus('Force-pushed · ' + new Date().toLocaleString());
+    setCloudStatus('Force-pushed · ' + phx.datetime(Date.now()) + ' AZ');
     flash('Pushed to cloud');
   } catch (e) {
     setCloudStatus('Force push failed: ' + e.message);

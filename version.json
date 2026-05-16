@@ -1,4 +1,4 @@
 {
-  "build": "20260516-1500",
-  "summary": "Open Food Facts secondary nutrition source, search clear button, layout reorder, visual refresh"
+  "build": "20260516-1030",
+  "summary": "Steps tracking + Apple Watch Shortcut sync + Apple Health import; force Phoenix timezone everywhere"
 }

@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Kidney Advisor</title>
-<link rel="stylesheet" href="styles.css?v=20260516-1500" />
+<link rel="stylesheet" href="styles.css?v=20260516-1030" />
 
 <!-- PWA / iOS home-screen app -->
 <link rel="manifest" href="manifest.json" />
@@ -255,6 +255,87 @@
       </div>
     </div>
 
+    <div class="card steps-card" id="steps-card">
+      <div class="card-row">
+        <h3 style="margin:0">Steps Today</h3>
+        <span class="steps-source-status hint" id="steps-source-status" style="margin:0"></span>
+      </div>
+
+      <div class="steps-hero">
+        <div class="steps-hero-main">
+          <div class="steps-hero-count"><span id="steps-today-count">0</span></div>
+          <div class="steps-hero-target">of <span id="steps-today-target">8,000</span> goal</div>
+        </div>
+        <div class="steps-hero-progress">
+          <div class="steps-progress-track">
+            <div class="steps-progress-fill" id="steps-today-bar" style="width:0%"></div>
+          </div>
+          <div class="steps-hero-remaining" id="steps-today-remaining">8,000 steps to go</div>
+        </div>
+      </div>
+
+      <div class="steps-quick">
+        <span class="quick-label">Quick add:</span>
+        <button type="button" class="quick-chip" data-steps-add="500">+500</button>
+        <button type="button" class="quick-chip" data-steps-add="1000">+1,000</button>
+        <button type="button" class="quick-chip" data-steps-add="2000">+2,000</button>
+        <button type="button" class="quick-chip" data-steps-add="5000">+5,000</button>
+      </div>
+
+      <div class="steps-forms">
+        <form id="steps-custom-form" class="steps-inline-form">
+          <label>Add steps
+            <input type="number" id="steps-custom-input" min="1" step="1" placeholder="e.g., 750" />
+          </label>
+          <button type="submit" class="secondary">Add</button>
+        </form>
+        <form id="steps-set-total-form" class="steps-inline-form">
+          <label>Set today's total
+            <input type="number" id="steps-set-total-input" min="0" step="1" placeholder="e.g., 8542" />
+          </label>
+          <button type="submit" class="primary">Set</button>
+        </form>
+      </div>
+
+      <details class="steps-sync-details">
+        <summary>Sync with Apple Watch</summary>
+        <div class="steps-sync-body">
+          <p class="hint" style="margin-top:8px">Apple Watch step counts live in Apple Health. There's no direct web API, but an iOS Shortcut can read your daily step count and open a one-tap sync URL — fully automatic once set up.</p>
+          <ol class="steps-sync-steps">
+            <li>On iPhone, open the <strong>Shortcuts</strong> app → <strong>+</strong> to create a new Shortcut.</li>
+            <li>Add action <em>"Find Health Samples"</em>: Sample Type = <strong>Steps</strong>, Start Date = <em>Start of Today</em>, End Date = <em>Now</em>.</li>
+            <li>Add action <em>"Calculate Statistics"</em> over the result: <strong>Sum of Quantity</strong>.</li>
+            <li>Add action <em>"URL"</em> with value:
+              <code class="steps-shortcut-url">https://jasonbrown-qa.github.io/kidney-advisor/?steps=<em>[Sum]</em></code>
+              (drag the Sum variable from step 3 into the <code>[Sum]</code> placeholder).
+            </li>
+            <li>Add action <em>"Open URLs"</em>.</li>
+            <li>Name it <em>"Sync Kidney Advisor"</em>. Tap to run, or add to your home screen / Apple Watch face for one-tap sync.</li>
+          </ol>
+          <p class="hint">For automation: in Shortcuts → Automation → Personal Automation → Time of Day → 9:00 PM → run "Sync Kidney Advisor".</p>
+          <div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap">
+            <button type="button" class="secondary" id="btn-steps-shortcut-copy">Copy sync URL template</button>
+          </div>
+
+          <hr style="margin:14px 0;border:0;border-top:1px solid var(--border)" />
+
+          <p class="hint" style="margin-top:0"><strong>One-shot backfill from Apple Health export:</strong></p>
+          <ol class="steps-sync-steps">
+            <li>iPhone → Health app → tap your profile photo → <strong>Export All Health Data</strong>.</li>
+            <li>Wait a few minutes; Health builds <code>export.zip</code>. Save / share to your Mac or PC.</li>
+            <li>Unzip and locate <code>apple_health_export/export.xml</code> (can be large — that's OK).</li>
+            <li>Upload that <code>.xml</code> file here:</li>
+          </ol>
+          <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
+            <button type="button" class="secondary" id="btn-steps-health-pick">Choose export.xml</button>
+            <input type="file" id="steps-health-file" accept=".xml,application/xml,text/xml" class="visually-hidden-file" />
+            <span class="hint" id="steps-health-status" style="margin:0"></span>
+          </div>
+          <p class="hint">Imports the most recent 365 days of step totals. Replaces any prior Apple-Watch-sourced entries for those dates; manual entries are kept.</p>
+        </div>
+      </details>
+    </div>
+
     <div class="grid grid-2">
       <div class="card">
         <h3>Quick Water Log</h3>
@@ -348,7 +429,7 @@
       <p class="hint">Past days reset automatically at midnight. Tap a row to view the entries from that day.</p>
       <div class="table-wrap">
         <table id="diet-history-table">
-          <thead><tr><th>Date</th><th>Cal</th><th>Carb</th><th>Fat</th><th>Fib</th><th>Prot</th><th>Na</th><th>K</th><th>P</th><th>Fluids</th></tr></thead>
+          <thead><tr><th>Date</th><th>Cal</th><th>Carb</th><th>Fat</th><th>Fib</th><th>Prot</th><th>Na</th><th>K</th><th>P</th><th>Fluids</th><th>Steps</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -577,6 +658,7 @@
         <label>Daily fiber target (g) <input type="number" name="fiberTarget" /></label>
         <label>Daily protein target (g) <input type="number" step="0.1" name="proteinTarget" /></label>
         <label>Daily fluid target (oz) <input type="number" step="0.5" name="fluidTarget" /></label>
+        <label>Daily steps target <input type="number" step="100" name="stepsTarget" /></label>
         <label>Daily sodium target (mg) <input type="number" name="sodiumTarget" /></label>
         <label>Daily potassium target (mg) <input type="number" name="potassiumTarget" /></label>
         <label>Daily phosphorus target (mg) <input type="number" name="phosphorusTarget" /></label>
@@ -691,7 +773,7 @@
         <button id="btn-cloud-disconnect" class="danger" hidden>Disconnect</button>
       </div>
       <div id="cloud-sync-status" class="hint" style="margin-top:8px"></div>
-      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260516-1500 — Open Food Facts secondary nutrition source, search clear button, layout reorder, visual refresh</span></p>
+      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260516-1030 — Steps tracking + Apple Watch Shortcut sync + Apple Health import; force Phoenix timezone everywhere</span></p>
     </div>
 
     <div class="card">
@@ -733,6 +815,6 @@
 </div>
 
 <script src="foods.js"></script>
-<script src="app.js?v=20260516-1500"></script>
+<script src="app.js?v=20260516-1030"></script>
 </body>
 </html>
