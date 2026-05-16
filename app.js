@@ -1427,19 +1427,37 @@ async function searchUSDA(query) {
   try {
     const res = await fetch(url, { method: 'GET', signal: controller.signal });
     clearTimeout(timeoutId);
-    if (!res.ok) {
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    const isJson = ct.includes('json');
+
+    // USDA sometimes 200's a redirect to its Angular portal site when the
+    // demo key is throttled or the API is briefly unavailable. Body is then
+    // HTML, not JSON. Treat any non-JSON response as a soft rate-limit so
+    // the user gets the actionable "get your own key" UI instead of a wall
+    // of HTML in the error toast.
+    if (!res.ok || !isJson) {
       let msg = `${res.status} ${res.statusText}`;
+      let body = '';
+      try { body = await res.text(); } catch {}
+      const looksHtml = /^\s*<(?:!doctype|html|\?xml)/i.test(body);
+
+      if (looksHtml) {
+        throw Object.assign(
+          new Error('USDA returned a web page instead of JSON — typically the shared demo key is throttled, or USDA briefly routed API traffic to their portal site. Get a free personal key for a 1,000/hour quota.'),
+          { _rateLimit: true }
+        );
+      }
+      // Try JSON-shaped error body
       try {
-        const errText = await res.text();
-        try {
-          const j = JSON.parse(errText);
-          if (j.error && j.error.message) msg = j.error.message;
-          else if (j.message) msg = j.message;
-        } catch {
-          if (errText) msg = errText.slice(0, 200);
-        }
-      } catch {}
-      if (res.status === 429) msg = 'USDA rate limit hit. Get your own free key at fdc.nal.usda.gov/api-key-signup.html — adds 1000 requests/hour. Then paste it into Settings → USDA Food Database.';
+        const j = JSON.parse(body);
+        if (j.error && j.error.message) msg = j.error.message;
+        else if (j.message) msg = j.message;
+      } catch {
+        if (body) msg = body.slice(0, 200);
+      }
+      if (res.status === 429) {
+        throw Object.assign(new Error('USDA rate limit hit. Get your own free key at fdc.nal.usda.gov/api-key-signup.html — adds 1000 requests/hour. Then paste it into Settings → USDA Food Database.'), { _rateLimit: true });
+      }
       if (res.status === 403) msg = 'API key rejected (403). Check your key in Settings → USDA Food Database, or clear the field to use the shared demo key.';
       throw new Error(msg);
     }
@@ -1449,7 +1467,7 @@ async function searchUSDA(query) {
   } catch (err) {
     clearTimeout(timeoutId);
     let display = err.message || String(err);
-    let isRateLimit = false;
+    let isRateLimit = !!err._rateLimit;
     if (err.name === 'AbortError') {
       display = 'Request timed out after 15 seconds. USDA may be slow or your connection was interrupted — try again.';
     } else if (display === 'Failed to fetch' || display.startsWith('NetworkError')) {
@@ -1656,6 +1674,12 @@ async function searchOpenFoodFacts(query) {
     const res = await fetch(url, { method: 'GET', signal: controller.signal });
     clearTimeout(timeoutId);
     if (!res.ok) throw new Error(`Open Food Facts returned ${res.status}`);
+    // Same guard as USDA: a non-JSON body usually means a maintenance/portal page.
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    if (!ct.includes('json')) {
+      const peek = (await res.text()).slice(0, 60);
+      throw new Error(`Open Food Facts returned a non-JSON response (peek: ${peek.replace(/[\r\n]+/g, ' ')}…)`);
+    }
     const data = await res.json();
     const raw = Array.isArray(data.products) ? data.products : [];
     // Filter to products that have at least a name and at least one nutrient
@@ -4235,9 +4259,14 @@ async function init() {
   renderCloudSyncUI();
 
   // On launch, if cloud sync is configured, silently pull if the cloud copy
-  // is newer. Asks for confirmation before replacing local data.
+  // is newer. No confirm prompt — user wants frictionless catch-up on open.
+  // Last-write-wins already handles the rare conflict case.
   if (cloudGetPat()) {
-    cloudPullIfNewer({ prompt: true }).catch(err => {
+    cloudPullIfNewer({ prompt: false }).then(result => {
+      if (result && result.pulled) {
+        setCloudStatus('Auto-synced from cloud · ' + phx.datetime(result.remoteTime) + ' AZ');
+      }
+    }).catch(err => {
       console.warn('Cloud pull on startup failed', err);
       setCloudStatus('Auto-pull failed: ' + err.message);
     });
@@ -4259,7 +4288,11 @@ async function init() {
     const now = Date.now();
     if (now - lastVisibilityPull < 30 * 1000) return;
     lastVisibilityPull = now;
-    cloudPullIfNewer({ prompt: true }).catch(err => {
+    cloudPullIfNewer({ prompt: false }).then(result => {
+      if (result && result.pulled) {
+        setCloudStatus('Auto-synced from cloud · ' + phx.datetime(result.remoteTime) + ' AZ');
+      }
+    }).catch(err => {
       console.warn('Visibility pull failed', err);
       setCloudStatus('Auto-pull failed: ' + err.message);
     });
@@ -4321,7 +4354,7 @@ function setupPullToRefresh() {
       indicator.style.transform = 'translateY(0)';
       if (cloudGetPat()) {
         indicator.textContent = '↻ Syncing from cloud…';
-        cloudSyncNow({ prompt: true }).then(() => {
+        cloudSyncNow({ prompt: false }).then(() => {
           indicator.textContent = '✓ Synced';
           setTimeout(() => { indicator.style.transform = 'translateY(-100%)'; }, 800);
         }).catch(err => {

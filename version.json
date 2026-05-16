@@ -1,4 +1,4 @@
 {
-  "build": "20260516-1030",
-  "summary": "Steps tracking + Apple Watch Shortcut sync + Apple Health import; force Phoenix timezone everywhere"
+  "build": "20260516-1040",
+  "summary": "Silent cloud auto-sync on open + USDA HTML-response detection"
 }
