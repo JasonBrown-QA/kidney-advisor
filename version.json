@@ -1,4 +1,4 @@
 {
-  "build": "20260514-1945",
-  "summary": "Disable Gemini thinking for restaurant picks so JSON doesn't truncate"
+  "build": "20260516-1500",
+  "summary": "Open Food Facts secondary nutrition source, search clear button, layout reorder, visual refresh"
 }

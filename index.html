@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Kidney Advisor</title>
-<link rel="stylesheet" href="styles.css?v=20260514-1945" />
+<link rel="stylesheet" href="styles.css?v=20260516-1500" />
 
 <!-- PWA / iOS home-screen app -->
 <link rel="manifest" href="manifest.json" />
@@ -255,21 +255,6 @@
       </div>
     </div>
 
-    <div class="card">
-      <div class="card-row">
-        <h3 style="margin:0">Daily Totals History</h3>
-        <span class="hint" id="diet-history-count" style="margin:0"></span>
-      </div>
-      <p class="hint">Past days reset automatically at midnight. Tap a row to view the entries from that day.</p>
-      <div class="table-wrap">
-        <table id="diet-history-table">
-          <thead><tr><th>Date</th><th>Cal</th><th>Carb</th><th>Fat</th><th>Fib</th><th>Prot</th><th>Na</th><th>K</th><th>P</th><th>Fluids</th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <div id="diet-history-detail" hidden></div>
-    </div>
-
     <div class="grid grid-2">
       <div class="card">
         <h3>Quick Water Log</h3>
@@ -329,18 +314,54 @@
 
     <div class="card">
       <div class="card-row">
-        <h3 style="margin:0">Search USDA Food Database</h3>
-        <input type="search" id="usda-search" placeholder="Search any food (mcdonalds hamburger, starbucks latte, chipotle bowl…)" style="flex:1;min-width:240px" />
+        <h3 style="margin:0">Search Food Databases</h3>
+        <div class="search-wrap">
+          <input type="search" id="usda-search" placeholder="Search any food (mcdonalds hamburger, starbucks latte, chipotle bowl…)" autocomplete="off" />
+          <button type="button" class="search-clear" id="usda-search-clear" aria-label="Clear search" title="Clear search" hidden>×</button>
+        </div>
       </div>
-      <p class="hint">Searches 600,000+ foods including branded/restaurant items. Type a restaurant name to also see kidney-friendly menu picks. Click a result to add it to today's diet with full macros.</p>
+      <p class="hint">Searches USDA (600,000+ foods, including branded/restaurant items) plus Open Food Facts (3M+ community-contributed products) as a secondary source. Type a restaurant name to also see kidney-friendly menu picks. Click a result to add it to today's diet with full macros.</p>
       <div id="usda-restaurant-suggestions" class="restaurant-suggest-panel" hidden></div>
-      <div id="usda-results" class="food-results"></div>
+      <div class="results-section" id="usda-section" hidden>
+        <div class="results-section-header">
+          <span class="results-source-tag tag-usda">USDA</span>
+          <span class="results-source-label">FoodData Central</span>
+          <span class="results-section-count" id="usda-count"></span>
+        </div>
+        <div id="usda-results" class="food-results"></div>
+      </div>
+      <div class="results-section" id="off-section" hidden>
+        <div class="results-section-header">
+          <span class="results-source-tag tag-off">OFF</span>
+          <span class="results-source-label">Open Food Facts</span>
+          <span class="results-section-count" id="off-count"></span>
+        </div>
+        <div id="off-results" class="food-results"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-row">
+        <h3 style="margin:0">Daily Totals History</h3>
+        <span class="hint" id="diet-history-count" style="margin:0"></span>
+      </div>
+      <p class="hint">Past days reset automatically at midnight. Tap a row to view the entries from that day.</p>
+      <div class="table-wrap">
+        <table id="diet-history-table">
+          <thead><tr><th>Date</th><th>Cal</th><th>Carb</th><th>Fat</th><th>Fib</th><th>Prot</th><th>Na</th><th>K</th><th>P</th><th>Fluids</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="diet-history-detail" hidden></div>
     </div>
 
     <div class="card">
       <div class="card-row">
         <h3 style="margin:0">Quick Add from Local CKD Database</h3>
-        <input type="search" id="food-search" placeholder="Search basic foods (apple, chicken, milk…)" />
+        <div class="search-wrap">
+          <input type="search" id="food-search" placeholder="Search basic foods (apple, chicken, milk…)" autocomplete="off" />
+          <button type="button" class="search-clear" id="food-search-clear" aria-label="Clear search" title="Clear search" hidden>×</button>
+        </div>
       </div>
       <p class="hint">~95 curated CKD-relevant items with Na/K/P data, available offline.</p>
       <div id="food-results" class="food-results"></div>
@@ -670,7 +691,7 @@
         <button id="btn-cloud-disconnect" class="danger" hidden>Disconnect</button>
       </div>
       <div id="cloud-sync-status" class="hint" style="margin-top:8px"></div>
-      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260514-1945 — Disable Gemini thinking for restaurant picks so JSON doesn't truncate</span></p>
+      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260516-1500 — Open Food Facts secondary nutrition source, search clear button, layout reorder, visual refresh</span></p>
     </div>
 
     <div class="card">
@@ -712,6 +733,6 @@
 </div>
 
 <script src="foods.js"></script>
-<script src="app.js?v=20260514-1945"></script>
+<script src="app.js?v=20260516-1500"></script>
 </body>
 </html>

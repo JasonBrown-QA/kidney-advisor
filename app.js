@@ -1153,7 +1153,11 @@ function renderFoodResults(query = '') {
   });
 }
 
-document.getElementById('food-search').addEventListener('input', e => renderFoodResults(e.target.value));
+document.getElementById('food-search').addEventListener('input', e => {
+  renderFoodResults(e.target.value);
+  const clear = document.getElementById('food-search-clear');
+  if (clear) clear.hidden = !e.target.value;
+});
 
 // ─── USDA FoodData Central search ────────────────────────────────────────
 
@@ -1205,17 +1209,29 @@ function extractUSDANutrients(food) {
 
 let usdaSearchTimer = null;
 let usdaLastResults = [];
+let offLastResults = [];
+
+function setResultsSectionVisibility() {
+  const usdaSection = document.getElementById('usda-section');
+  const offSection = document.getElementById('off-section');
+  if (usdaSection) usdaSection.hidden = !usdaLastResults.length && !usdaSection.dataset.loading;
+  if (offSection) offSection.hidden = !offLastResults.length && !offSection.dataset.loading;
+}
 
 async function searchUSDA(query) {
   const wrap = document.getElementById('usda-results');
+  const section = document.getElementById('usda-section');
   // Surface kidney-friendly restaurant picks above the USDA results when the
   // query names a chain we recognize. Runs in parallel with the USDA fetch.
   renderRestaurantSuggestions(detectRestaurant(query));
   if (!query || query.trim().length < 2) {
     wrap.innerHTML = '';
+    usdaLastResults = [];
+    if (section) { section.hidden = true; delete section.dataset.loading; }
     return;
   }
-  wrap.innerHTML = '<div style="padding:10px;color:var(--text-muted)"><span class="advisor-spinner"></span>Searching USDA…</div>';
+  if (section) { section.hidden = false; section.dataset.loading = '1'; }
+  wrap.innerHTML = '<div class="results-loading"><span class="advisor-spinner"></span>Searching USDA…</div>';
 
   const apiKey = loadUSDAKey() || 'DEMO_KEY';
   // Build URL with URLSearchParams; use repeated dataType params to avoid the
@@ -1303,8 +1319,13 @@ async function searchUSDA(query) {
 
 function renderUSDAResults(foods) {
   const wrap = document.getElementById('usda-results');
+  const section = document.getElementById('usda-section');
+  const countEl = document.getElementById('usda-count');
+  if (section) delete section.dataset.loading;
+  if (countEl) countEl.textContent = foods.length ? `${foods.length} result${foods.length === 1 ? '' : 's'}` : '';
   if (!foods.length) {
-    wrap.innerHTML = '<div style="padding:10px;color:var(--text-muted)">No matches. Try a simpler query.</div>';
+    wrap.innerHTML = '<div class="results-empty">No matches in USDA. Check Open Food Facts results below, or try a simpler query.</div>';
+    if (section) section.hidden = false;
     return;
   }
   const servingOptions = [0.25, 0.5, 0.75, 1, 1.5, 2, 3];
@@ -1422,13 +1443,240 @@ function renderUSDAResults(foods) {
   });
 }
 
+// ─── Open Food Facts search (secondary source) ───────────────────────────
+// Supplements USDA. OFF has stronger international + grocery branded coverage;
+// USDA has stronger restaurant + USDA-tested staples. Fetch in parallel.
+
+let offSearchTimer = null;
+
+async function searchOpenFoodFacts(query) {
+  const wrap = document.getElementById('off-results');
+  const section = document.getElementById('off-section');
+  const countEl = document.getElementById('off-count');
+  if (!wrap) return;
+  if (!query || query.trim().length < 2) {
+    wrap.innerHTML = '';
+    offLastResults = [];
+    if (section) { section.hidden = true; delete section.dataset.loading; }
+    return;
+  }
+  if (section) { section.hidden = false; section.dataset.loading = '1'; }
+  wrap.innerHTML = '<div class="results-loading"><span class="advisor-spinner"></span>Searching Open Food Facts…</div>';
+  if (countEl) countEl.textContent = '';
+
+  const params = new URLSearchParams();
+  params.set('search_terms', query.trim());
+  params.set('search_simple', '1');
+  params.set('action', 'process');
+  params.set('json', '1');
+  params.set('page_size', '20');
+  params.set('fields', 'code,product_name,product_name_en,brands,serving_size,serving_quantity,nutriments,quantity,image_front_small_url');
+  const url = `https://world.openfoodfacts.org/cgi/search.pl?${params.toString()}`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const res = await fetch(url, { method: 'GET', signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (!res.ok) throw new Error(`Open Food Facts returned ${res.status}`);
+    const data = await res.json();
+    const raw = Array.isArray(data.products) ? data.products : [];
+    // Filter to products that have at least a name and at least one nutrient
+    offLastResults = raw.filter(p => {
+      if (!(p.product_name || p.product_name_en)) return false;
+      const n = p.nutriments || {};
+      return n['energy-kcal_100g'] != null || n['energy-kcal_serving'] != null ||
+             n['proteins_100g'] != null || n['carbohydrates_100g'] != null;
+    });
+    renderOffResults(offLastResults);
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (section) delete section.dataset.loading;
+    let display = err.message || String(err);
+    if (err.name === 'AbortError') display = 'Open Food Facts timed out after 15 seconds.';
+    else if (display === 'Failed to fetch' || display.startsWith('NetworkError')) {
+      display = 'Could not reach Open Food Facts. Skip and use USDA results.';
+    }
+    wrap.innerHTML = `<div class="results-empty" style="color:var(--bad)">Open Food Facts: ${escapeHtml(display)}</div>`;
+  }
+}
+
+function renderOffResults(products) {
+  const wrap = document.getElementById('off-results');
+  const section = document.getElementById('off-section');
+  const countEl = document.getElementById('off-count');
+  if (section) delete section.dataset.loading;
+  if (countEl) countEl.textContent = products.length ? `${products.length} result${products.length === 1 ? '' : 's'}` : '';
+  if (!products.length) {
+    wrap.innerHTML = '<div class="results-empty">No matches in Open Food Facts.</div>';
+    if (section) section.hidden = false;
+    return;
+  }
+  const servingOptions = [0.25, 0.5, 0.75, 1, 1.5, 2, 3];
+  wrap.innerHTML = products.map((p, i) => {
+    const n = extractOffNutrients(p);
+    const name = p.product_name || p.product_name_en || 'Unknown product';
+    const brand = p.brands || '';
+    const calPer = n.calories != null ? Math.round(n.calories) : null;
+    const cal = calPer != null ? `${calPer} kcal` : '— kcal';
+    const macros = [
+      n.protein != null ? `P ${n.protein.toFixed(1)}g` : null,
+      n.carbs != null ? `C ${n.carbs.toFixed(1)}g` : null,
+      n.fat != null ? `F ${n.fat.toFixed(1)}g` : null,
+      n.fiber != null ? `Fib ${n.fiber.toFixed(1)}g` : null,
+    ].filter(Boolean).join(' · ');
+    const kidney = [
+      n.sodium != null ? `Na ${Math.round(n.sodium)}mg` : null,
+      n.potassium != null ? `K ${Math.round(n.potassium)}mg` : null,
+      n.phosphorus != null ? `P ${Math.round(n.phosphorus)}mg` : null,
+    ].filter(Boolean).join(' · ');
+
+    const options = servingOptions.map(opt => {
+      const label = opt === 0.25 ? '1/4' : opt === 0.5 ? '1/2' : opt === 0.75 ? '3/4' : String(opt);
+      const kcal = calPer != null ? ` — ${Math.round(calPer * opt)} kcal` : '';
+      const selected = opt === 1 ? ' selected' : '';
+      return `<option value="${opt}"${selected}>${label} serving${opt === 1 ? '' : 's'}${kcal}</option>`;
+    }).join('');
+
+    const imgHtml = p.image_front_small_url
+      ? `<img src="${escapeHtml(p.image_front_small_url)}" alt="" loading="lazy" class="off-thumb" />`
+      : '';
+
+    return `<div class="food-card off-card" data-off-idx="${i}">
+      ${imgHtml}
+      <div class="name">${escapeHtml(name)}${brand ? ` <span class="food-tag tag-brand">${escapeHtml(brand)}</span>` : ''}</div>
+      <div class="serving">Per ${escapeHtml(n.servingText)} · ${cal}${macros ? ' · ' + macros : ''}</div>
+      ${kidney ? `<div class="stats">${kidney}</div>` : ''}
+      <div class="row" style="gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+        <label style="margin:0;font-size:13px">Servings
+          <select class="off-serving-select" data-off-idx="${i}" style="margin-left:6px">
+            ${options}
+            <option value="custom">Custom…</option>
+          </select>
+        </label>
+        <input type="number" class="off-serving-custom" data-off-idx="${i}" step="0.05" min="0.05" placeholder="e.g. 1.25" style="width:90px;display:none" />
+        <span class="off-serving-preview hint" data-off-idx="${i}" style="margin:0">${calPer != null ? Math.round(calPer) + ' kcal' : ''}</span>
+        <button type="button" class="primary off-add-btn" data-off-idx="${i}" style="margin-left:auto">Add</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  function readServings(idx) {
+    const sel = wrap.querySelector(`.off-serving-select[data-off-idx="${idx}"]`);
+    const custom = wrap.querySelector(`.off-serving-custom[data-off-idx="${idx}"]`);
+    if (!sel) return 1;
+    if (sel.value === 'custom') {
+      const v = parseFloat(custom && custom.value);
+      return v > 0 ? v : null;
+    }
+    return parseFloat(sel.value) || 1;
+  }
+
+  function updatePreview(idx) {
+    const prod = offLastResults[Number(idx)];
+    const preview = wrap.querySelector(`.off-serving-preview[data-off-idx="${idx}"]`);
+    if (!prod || !preview) return;
+    const n = extractOffNutrients(prod);
+    const s = readServings(idx);
+    if (s == null) { preview.textContent = 'Enter a custom amount'; return; }
+    const parts = [];
+    if (n.calories != null) parts.push(`${Math.round(n.calories * s)} kcal`);
+    if (n.sodium != null) parts.push(`Na ${Math.round(n.sodium * s)}mg`);
+    if (n.potassium != null) parts.push(`K ${Math.round(n.potassium * s)}mg`);
+    preview.textContent = parts.join(' · ');
+  }
+
+  wrap.querySelectorAll('.off-serving-select').forEach(sel => {
+    sel.addEventListener('change', e => {
+      const idx = sel.dataset.offIdx;
+      const custom = wrap.querySelector(`.off-serving-custom[data-off-idx="${idx}"]`);
+      if (sel.value === 'custom') {
+        if (custom) { custom.style.display = ''; custom.focus(); }
+      } else {
+        if (custom) { custom.style.display = 'none'; }
+      }
+      updatePreview(idx);
+      e.stopPropagation();
+    });
+  });
+
+  wrap.querySelectorAll('.off-serving-custom').forEach(input => {
+    input.addEventListener('input', e => {
+      updatePreview(input.dataset.offIdx);
+      e.stopPropagation();
+    });
+    input.addEventListener('click', e => e.stopPropagation());
+  });
+
+  wrap.querySelectorAll('.off-add-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const idx = btn.dataset.offIdx;
+      const prod = offLastResults[Number(idx)];
+      if (!prod) return;
+      const servings = readServings(idx);
+      if (!servings || isNaN(servings) || servings <= 0) {
+        alert('Enter a serving amount greater than 0.');
+        return;
+      }
+      const n = extractOffNutrients(prod);
+      const name = prod.product_name || prod.product_name_en || 'Unknown product';
+      const entry = { id: uid(), date: todayISO(), item: name, servings };
+      for (const f of ['calories','carbs','fat','fiber','protein','sodium','potassium','phosphorus']) {
+        if (n[f] != null) entry[f] = n[f];
+      }
+      state.diet.push(entry);
+      save();
+      flash(`Added ${name} × ${servings}`);
+      renderAll();
+    });
+  });
+}
+
+// ─── Search input wiring ─────────────────────────────────────────────────
+
+function updateSearchClearVisibility(inputId, clearId) {
+  const input = document.getElementById(inputId);
+  const clear = document.getElementById(clearId);
+  if (!input || !clear) return;
+  clear.hidden = !input.value;
+}
+
 document.getElementById('usda-search').addEventListener('input', e => {
   clearTimeout(usdaSearchTimer);
+  clearTimeout(offSearchTimer);
   // Restaurant suggestions render immediately on the brand keyword — no need
   // to wait for the 400 ms USDA debounce. Cheap detection, cached AI output.
   renderRestaurantSuggestions(detectRestaurant(e.target.value));
-  usdaSearchTimer = setTimeout(() => searchUSDA(e.target.value), 400);
+  updateSearchClearVisibility('usda-search', 'usda-search-clear');
+  const q = e.target.value;
+  usdaSearchTimer = setTimeout(() => searchUSDA(q), 400);
+  offSearchTimer = setTimeout(() => searchOpenFoodFacts(q), 500);
 });
+
+document.getElementById('usda-search-clear')?.addEventListener('click', () => {
+  const input = document.getElementById('usda-search');
+  if (!input) return;
+  input.value = '';
+  input.focus();
+  clearTimeout(usdaSearchTimer);
+  clearTimeout(offSearchTimer);
+  renderRestaurantSuggestions(null);
+  searchUSDA('');
+  searchOpenFoodFacts('');
+  updateSearchClearVisibility('usda-search', 'usda-search-clear');
+});
+
+document.getElementById('food-search-clear')?.addEventListener('click', () => {
+  const input = document.getElementById('food-search');
+  if (!input) return;
+  input.value = '';
+  input.focus();
+  renderFoodResults('');
+  updateSearchClearVisibility('food-search', 'food-search-clear');
+});
+
 
 // ─── Restaurant kidney-friendly picks ─────────────────────────────────────
 // When the USDA search query names a chain restaurant, surface CKD-tuned
@@ -2818,10 +3066,16 @@ function nowDatetimeLocal() {
 
 function flash(msg) {
   const el = document.createElement('div');
+  el.className = 'flash-toast';
   el.textContent = msg;
-  el.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1c2733;color:white;padding:10px 18px;border-radius:6px;font-size:13px;z-index:1000;box-shadow:0 4px 12px rgba(0,0,0,.2)';
   document.body.appendChild(el);
-  setTimeout(() => el.remove(), 2000);
+  // Force a reflow so the .show transition kicks in
+  void el.offsetHeight;
+  el.classList.add('show');
+  setTimeout(() => {
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 250);
+  }, 2200);
 }
 
 function download(filename, text, mime) {
