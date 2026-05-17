@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Kidney Advisor</title>
-<link rel="stylesheet" href="styles.css?v=20260517-1520" />
+<link rel="stylesheet" href="styles.css?v=20260517-1530" />
 
 <!-- PWA / iOS home-screen app -->
 <link rel="manifest" href="manifest.json" />
@@ -336,7 +336,10 @@
           <p class="hint">The app consumes every param it recognizes in one shot — set up once, sync everything together.</p>
 
           <p class="hint" style="margin-top:14px;font-weight:700;color:var(--text)">Make it fully automatic</p>
-          <p class="hint">Shortcuts → bottom tab <strong>Automation</strong> → <strong>+</strong> → <em>Time of Day</em> → e.g. 9:00 PM → Daily → action: <strong>Run Shortcut</strong> → pick your sync Shortcut → toggle off <strong>Ask Before Running</strong>. iOS will fire it nightly with no taps.</p>
+          <p class="hint">Two options — pick whichever fits how you log:</p>
+          <p class="hint" style="margin-top:6px"><strong>Option A — Time-of-day (steps):</strong> Shortcuts → bottom tab <strong>Automation</strong> → <strong>+</strong> → <em>Time of Day</em> → e.g. 9:00 PM → Daily → action: <strong>Run Shortcut</strong> → pick "Sync Steps" → toggle off <strong>Ask Before Running</strong>. iOS fires it nightly with no taps.</p>
+          <p class="hint" style="margin-top:6px"><strong>Option B — Health Update trigger (BP from Smart BP / any cuff):</strong> Shortcuts → <strong>Automation</strong> → <strong>+</strong> → <em>Health</em> → <em>Vital category</em> = <strong>Heart</strong> → toggle on <strong>Blood Pressure</strong> → action: <strong>Run Shortcut</strong> → pick "Sync BP" → toggle off <strong>Ask Before Running</strong> → tap <strong>Done</strong>. Every time Smart BP (or any cuff app) writes a new reading into Apple Health, iOS will fire the Shortcut and the value lands in the app within seconds — completely hands-off.</p>
+          <p class="hint" style="margin-top:6px"><em>Note:</em> Smart BP must be authorized to write to Apple Health (Smart BP app → Settings → Health Sync). On older iOS, the "Health" automation trigger may instead live under <em>Apple Health → Vital category</em>.</p>
 
           <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
             <button type="button" class="secondary" id="btn-steps-shortcut-copy">Copy Steps URL template</button>
@@ -759,10 +762,13 @@
       <p>All data is stored locally in your browser. Export regularly.</p>
       <div class="row">
         <button id="btn-export" class="secondary">Export JSON</button>
-        <button id="btn-import" class="secondary">Import JSON file</button>
+        <button id="btn-import" class="secondary">Import JSON file (replace)</button>
         <input type="file" id="import-file" accept=".json,application/json" class="visually-hidden-file" />
+        <button id="btn-merge-import" class="secondary">Merge labs + BP + meds from JSON</button>
+        <input type="file" id="merge-import-file" accept=".json,application/json" class="visually-hidden-file" />
         <button id="btn-clear" class="danger">Clear All Data</button>
       </div>
+      <p class="hint"><strong>Replace</strong> wipes all current data and loads the file. <strong>Merge</strong> only adds labs, BP readings, medications, and symptom entries — duplicates are skipped, and recent diet, steps, advisor chat, settings, and reminders are kept untouched. Use Merge to restore historical health records without losing recent tracking.</p>
       <details style="margin-top:14px">
         <summary style="cursor:pointer;font-weight:600">Paste JSON instead (no file needed — works on iPhone)</summary>
         <p class="hint" style="margin-top:8px">Copy the contents of a Kidney Advisor export, paste it here, then tap Import. Useful when you can't get the file onto your phone.</p>
@@ -800,7 +806,7 @@
         <button id="btn-cloud-disconnect" class="danger" hidden>Disconnect</button>
       </div>
       <div id="cloud-sync-status" class="hint" style="margin-top:8px"></div>
-      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260517-1520 — BP automation: ?systolic/diastolic/bp_time URL handler + Apple Health correlation import</span></p>
+      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260517-1530 — Merge-import + Smart BP Health Update auto-trigger recipe</span></p>
     </div>
 
     <div class="card">
@@ -842,6 +848,6 @@
 </div>
 
 <script src="foods.js"></script>
-<script src="app.js?v=20260517-1520"></script>
+<script src="app.js?v=20260517-1530"></script>
 </body>
 </html>

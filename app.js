@@ -3026,6 +3026,131 @@ document.getElementById('import-file').addEventListener('change', e => {
   e.target.value = '';
 });
 
+// ─── Merge-import (additive, dedup, doesn't wipe recent data) ────────────
+// Reads a JSON file in the same shape as Export JSON but only adds labs,
+// BP readings, meds (and optionally questions/symptoms) without touching
+// diet, steps, advisor chat, settings, reminders. Useful for restoring
+// historical health records into a state that already has recent diet/
+// step tracking you don't want to lose.
+function mergeImportData(incoming) {
+  const result = { labs: { added: 0, skipped: 0 }, bp: { added: 0, skipped: 0 }, meds: { added: 0, skipped: 0 }, symptoms: { added: 0, skipped: 0 } };
+  if (!incoming || typeof incoming !== 'object') throw new Error('Not a JSON object.');
+
+  // Labs — dedup on existing id, then on same date+egfr+creatinine signature.
+  if (Array.isArray(incoming.labs)) {
+    if (!Array.isArray(state.labs)) state.labs = [];
+    const existingIds = new Set(state.labs.map(l => l.id));
+    const sig = l => `${l.date}|${l.egfr ?? ''}|${l.creatinine ?? ''}|${l.potassium ?? ''}`;
+    const existingSigs = new Set(state.labs.map(sig));
+    for (const lab of incoming.labs) {
+      if (!lab || !lab.date) { result.labs.skipped++; continue; }
+      if (existingIds.has(lab.id) || existingSigs.has(sig(lab))) { result.labs.skipped++; continue; }
+      state.labs.push({ ...lab, id: lab.id || uid() });
+      existingIds.add(lab.id);
+      existingSigs.add(sig(lab));
+      result.labs.added++;
+    }
+    state.labs.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  }
+
+  // BP — reuse logBP idempotency: dedup on datetime + sys + dia.
+  if (Array.isArray(incoming.bp)) {
+    if (!Array.isArray(state.bp)) state.bp = [];
+    const before = state.bp.length;
+    for (const b of incoming.bp) {
+      if (!b || !b.datetime) { result.bp.skipped++; continue; }
+      const lenBefore = state.bp.length;
+      logBP({
+        systolic: b.systolic,
+        diastolic: b.diastolic,
+        pulse: b.pulse,
+        datetime: b.datetime,
+        position: b.position,
+        notes: b.notes,
+        source: b.source || 'imported',
+      });
+      if (state.bp.length > lenBefore) result.bp.added++;
+      else result.bp.skipped++;
+    }
+  }
+
+  // Meds — dedup on lowercased name (one entry per medication).
+  if (Array.isArray(incoming.meds)) {
+    if (!Array.isArray(state.meds)) state.meds = [];
+    const existingNames = new Set(state.meds.map(m => (m.name || '').trim().toLowerCase()));
+    for (const m of incoming.meds) {
+      if (!m || !m.name) { result.meds.skipped++; continue; }
+      const key = m.name.trim().toLowerCase();
+      if (existingNames.has(key)) { result.meds.skipped++; continue; }
+      state.meds.push({ ...m, id: m.id || uid() });
+      existingNames.add(key);
+      result.meds.added++;
+    }
+  }
+
+  // Symptoms — dedup on date (one snapshot per day).
+  if (Array.isArray(incoming.symptoms)) {
+    if (!Array.isArray(state.symptoms)) state.symptoms = [];
+    const existingDates = new Set(state.symptoms.map(s => s.date));
+    for (const s of incoming.symptoms) {
+      if (!s || !s.date) { result.symptoms.skipped++; continue; }
+      if (existingDates.has(s.date)) { result.symptoms.skipped++; continue; }
+      state.symptoms.push({ ...s, id: s.id || uid() });
+      existingDates.add(s.date);
+      result.symptoms.added++;
+    }
+    state.symptoms.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  }
+
+  return result;
+}
+
+function summarizeMerge(r) {
+  const parts = [];
+  if (r.labs.added)     parts.push(`${r.labs.added} lab${r.labs.added === 1 ? '' : 's'}`);
+  if (r.bp.added)       parts.push(`${r.bp.added} BP reading${r.bp.added === 1 ? '' : 's'}`);
+  if (r.meds.added)     parts.push(`${r.meds.added} medication${r.meds.added === 1 ? '' : 's'}`);
+  if (r.symptoms.added) parts.push(`${r.symptoms.added} symptom entr${r.symptoms.added === 1 ? 'y' : 'ies'}`);
+  const skipped = r.labs.skipped + r.bp.skipped + r.meds.skipped + r.symptoms.skipped;
+  let s = parts.length ? `Added ${parts.join(' + ')}` : 'Nothing new to add';
+  if (skipped) s += ` · skipped ${skipped} duplicate${skipped === 1 ? '' : 's'}`;
+  return s;
+}
+
+document.getElementById('btn-merge-import')?.addEventListener('click', () => {
+  document.getElementById('merge-import-file').click();
+});
+
+document.getElementById('merge-import-file')?.addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const incoming = JSON.parse(ev.target.result);
+      const labs = Array.isArray(incoming.labs) ? incoming.labs.length : 0;
+      const bp   = Array.isArray(incoming.bp) ? incoming.bp.length : 0;
+      const meds = Array.isArray(incoming.meds) ? incoming.meds.length : 0;
+      const syms = Array.isArray(incoming.symptoms) ? incoming.symptoms.length : 0;
+      const parts = [];
+      if (labs) parts.push(`${labs} labs`);
+      if (bp) parts.push(`${bp} BP readings`);
+      if (meds) parts.push(`${meds} meds`);
+      if (syms) parts.push(`${syms} symptom entries`);
+      if (!parts.length) { alert('Nothing to merge — file has no labs / bp / meds / symptoms.'); return; }
+      if (!confirm(`Merge ${parts.join(' + ')} from this file? Existing entries are deduplicated; diet, steps, advisor chat, settings, reminders are NOT touched.`)) return;
+      const r = mergeImportData(incoming);
+      save();
+      renderAll();
+      flash(summarizeMerge(r));
+    } catch (err) {
+      alert('Could not parse that file: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+});
+
 document.getElementById('btn-clear').addEventListener('click', () => {
   if (!confirm('Erase ALL Kidney Advisor data on this device? This cannot be undone.')) return;
   if (!confirm('Are you absolutely sure? Export first if you want a backup.')) return;

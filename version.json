@@ -1,4 +1,4 @@
 {
-  "build": "20260517-1520",
-  "summary": "BP automation: ?systolic/diastolic/bp_time URL handler + Apple Health correlation import"
+  "build": "20260517-1530",
+  "summary": "Merge-import (labs+BP+meds without wiping recent data) + Smart BP Health Update auto-trigger"
 }
