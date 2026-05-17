@@ -1,4 +1,4 @@
 {
-  "build": "20260516-1040",
-  "summary": "Silent cloud auto-sync on open + USDA HTML-response detection"
+  "build": "20260517-1520",
+  "summary": "BP automation: ?systolic/diastolic/bp_time URL handler + Apple Health correlation import"
 }

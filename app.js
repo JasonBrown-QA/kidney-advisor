@@ -624,6 +624,55 @@ function totalStepsForDate(dateStr) {
   return dayEntries.reduce((sum, s) => sum + (Number(s.steps) || 0), 0);
 }
 
+// Current local time in YYYY-MM-DDTHH:MM, anchored to Phoenix tz (matches the
+// format the BP datetime-local input uses).
+function nowDatetimePhoenix() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: PHOENIX_TZ,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date());
+  const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
+  return `${map.year}-${map.month}-${map.day}T${map.hour}:${map.minute}`;
+}
+
+// Log a BP reading from an automation source. Idempotent for sync sources:
+// if an entry already exists with the same datetime + sys + dia, returns it
+// without adding a duplicate. Manual entries are always added.
+function logBP({ systolic, diastolic, pulse, datetime, position, notes, source }) {
+  const sys = Math.round(Number(systolic));
+  const dia = Math.round(Number(diastolic));
+  if (!Number.isFinite(sys) || sys <= 0) return null;
+  if (!Number.isFinite(dia) || dia <= 0) return null;
+  if (!Array.isArray(state.bp)) state.bp = [];
+  const time = datetime || nowDatetimePhoenix();
+  const isSync = source && source !== 'manual';
+  if (isSync) {
+    // Idempotency — sync runs (Shortcut, Apple Health import) often repeat the
+    // same readings. Skip if same datetime + sys + dia already present.
+    const dup = state.bp.find(e =>
+      e.datetime === time &&
+      Number(e.systolic) === sys &&
+      Number(e.diastolic) === dia
+    );
+    if (dup) return dup;
+  }
+  const entry = {
+    id: uid(),
+    datetime: time,
+    systolic: sys,
+    diastolic: dia,
+    pulse: Number.isFinite(Number(pulse)) ? Math.round(Number(pulse)) : null,
+    position: position || 'seated',
+    notes: notes || '',
+    source: source || 'manual',
+  };
+  state.bp.push(entry);
+  state.bp.sort((a, b) => (a.datetime || '').localeCompare(b.datetime || ''));
+  return entry;
+}
+
 function logSteps(count, opts = {}) {
   count = Math.round(Number(count));
   if (!count || isNaN(count) || count < 0) return;
@@ -3045,14 +3094,35 @@ function wireStepsCard() {
     });
   }
 
-  // Shortcut URL generator
-  const btnShortcutUrl = document.getElementById('btn-steps-shortcut-copy');
-  if (btnShortcutUrl) {
-    btnShortcutUrl.addEventListener('click', async () => {
-      const base = (location.origin && !location.origin.startsWith('file')) ? (location.origin + location.pathname) : 'https://jasonbrown-qa.github.io/kidney-advisor/';
-      const example = base + '?steps=8542';
-      const ok = await copyToClipboard(example);
-      flash(ok ? 'Example URL copied — replace 8542 with your Shortcut\'s [Steps] variable' : 'Could not copy automatically');
+  // Shortcut URL generators
+  const baseUrl = () => (location.origin && !location.origin.startsWith('file'))
+    ? (location.origin + location.pathname)
+    : 'https://jasonbrown-qa.github.io/kidney-advisor/';
+
+  const btnStepsTmpl = document.getElementById('btn-steps-shortcut-copy');
+  if (btnStepsTmpl) {
+    btnStepsTmpl.addEventListener('click', async () => {
+      const url = baseUrl() + '?steps=[Statistic]';
+      const ok = await copyToClipboard(url);
+      flash(ok ? 'Steps URL copied — paste into your Shortcut\'s URL action, then drop the Statistic variable into [Statistic]' : 'Could not copy automatically');
+    });
+  }
+
+  const btnBPTmpl = document.getElementById('btn-bp-shortcut-copy');
+  if (btnBPTmpl) {
+    btnBPTmpl.addEventListener('click', async () => {
+      const url = baseUrl() + '?systolic=[Sys]&diastolic=[Dia]&bp_time=[WhenStr]';
+      const ok = await copyToClipboard(url);
+      flash(ok ? 'BP URL copied — paste into Shortcut\'s URL action, replace variables' : 'Could not copy automatically');
+    });
+  }
+
+  const btnCombinedTmpl = document.getElementById('btn-combined-shortcut-copy');
+  if (btnCombinedTmpl) {
+    btnCombinedTmpl.addEventListener('click', async () => {
+      const url = baseUrl() + '?steps=[Statistic]&systolic=[Sys]&diastolic=[Dia]&bp_time=[WhenStr]';
+      const ok = await copyToClipboard(url);
+      flash(ok ? 'Combined URL copied — one Shortcut, both syncs' : 'Could not copy automatically');
     });
   }
 }
@@ -4253,7 +4323,7 @@ async function init() {
   setTimeout(checkReminders, 5000);
 
   checkHashImport().catch(err => console.error('Hash import error', err));
-  checkStepsURLParam();
+  checkAutomationURLParams();
   wireStepsCard();
   setupPullToRefresh();
   renderCloudSyncUI();
@@ -4278,9 +4348,9 @@ async function init() {
   let lastVisibilityPull = 0;
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
-    // iOS Shortcut may "Open URLs" with ?steps=N into the already-running PWA
-    // window without a full reload — re-scan on every refocus.
-    checkStepsURLParam();
+    // iOS Shortcut may "Open URLs" with automation params into the already-running
+    // PWA window without a full reload — re-scan query + hash on every refocus.
+    checkAutomationURLParams();
     // Always check for new code first — if there's an update we'll reload
     // before doing the sync, so the post-reload code does the sync fresh.
     checkForUpdate();
@@ -4425,83 +4495,193 @@ async function checkHashImport() {
   }, 200);
 }
 
-// ─── Steps URL sync (iOS Shortcuts / Apple Watch) ────────────────────────
-// An iOS Shortcut can fetch today's step count from HealthKit and open this
-// URL: https://jasonbrown-qa.github.io/kidney-advisor/?steps=8542
-// Also accepts &date=YYYY-MM-DD (defaults to today) and a batch form
-// ?steps_batch=2026-05-15:7821,2026-05-14:9102
-// The query is stripped immediately after import so a refresh doesn't re-add.
-function checkStepsURLParam() {
-  const params = new URLSearchParams(location.search);
-  const single = params.get('steps');
-  const batch = params.get('steps_batch');
-  if (!single && !batch) return;
+// ─── Automation URL handler (iOS Shortcuts / Apple Watch) ────────────────
+// Single entry point for everything an iOS Shortcut can push into the PWA.
+// Supports both query string AND hash so it survives iOS PWA quirks: when
+// the standalone window is already open, Safari sometimes refocuses without
+// running init() — the hash variant + visibilitychange re-scan covers that.
+//
+// Supported keys:
+//   ?steps=N                  daily step count (cumulative for the day)
+//   &date=YYYY-MM-DD          optional date for the steps (defaults to today)
+//   ?steps_batch=YYYY-MM-DD:N,YYYY-MM-DD:N,...
+//   ?systolic=120&diastolic=80&pulse=72&bp_time=2026-05-17T08:00
+//                              (bp_time optional; defaults to now in Phoenix)
+//   ?bp_batch=YYYY-MM-DDTHH:MM:SYS/DIA[/PULSE],YYYY-MM-DDTHH:MM:SYS/DIA[/PULSE],...
+//
+// All consumed params are stripped from the URL after import so refresh
+// doesn't double-add.
+function checkAutomationURLParams() {
+  const searchParams = new URLSearchParams(location.search);
+  const hashStr = (location.hash || '').replace(/^#/, '');
+  const hashParams = /=/.test(hashStr) && !hashStr.startsWith('data=')
+    ? new URLSearchParams(hashStr)
+    : new URLSearchParams();
+  const get = (key) => searchParams.get(key) ?? hashParams.get(key);
 
-  let imported = 0;
-  if (batch) {
-    for (const piece of batch.split(',')) {
-      const [date, count] = piece.split(':');
-      if (!date || !count) continue;
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date.trim())) continue;
-      const n = Math.round(Number(count));
-      if (!n || n < 0) continue;
-      logSteps(n, { date: date.trim(), source: 'shortcut', skipRender: true });
-      imported++;
-    }
-  }
-  if (single) {
-    const date = params.get('date') || todayISO();
-    const n = Math.round(Number(single));
+  const stepsStr   = get('steps');
+  const stepsBatch = get('steps_batch');
+  const sysStr     = get('systolic');
+  const diaStr     = get('diastolic');
+  const pulseStr   = get('pulse');
+  const bpTime     = get('bp_time');
+  const bpBatch    = get('bp_batch');
+  const dateOverride = get('date');
+
+  if (!stepsStr && !stepsBatch && !sysStr && !bpBatch) return;
+
+  const summary = [];
+
+  // Steps — single cumulative count for the day
+  if (stepsStr) {
+    const n = Math.round(Number(stepsStr));
     if (n > 0) {
+      const date = (dateOverride && /^\d{4}-\d{2}-\d{2}$/.test(dateOverride.trim()))
+        ? dateOverride.trim() : todayISO();
       logSteps(n, { date, source: 'shortcut', skipRender: true });
-      imported++;
+      summary.push(`${n.toLocaleString()} steps`);
     }
   }
-  // Strip steps params from the URL so a refresh doesn't re-import.
-  params.delete('steps');
-  params.delete('steps_batch');
-  params.delete('date');
-  const qs = params.toString();
-  history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
 
-  if (imported) {
+  // Steps — multi-day backfill batch
+  if (stepsBatch) {
+    let count = 0;
+    for (const piece of stepsBatch.split(',')) {
+      const [date, c] = piece.split(':');
+      if (!date || !c) continue;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date.trim())) continue;
+      const n = Math.round(Number(c));
+      if (n > 0) {
+        logSteps(n, { date: date.trim(), source: 'shortcut', skipRender: true });
+        count++;
+      }
+    }
+    if (count) summary.push(`${count} step day${count === 1 ? '' : 's'}`);
+  }
+
+  // BP — single reading
+  if (sysStr && diaStr) {
+    const time = bpTime && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(bpTime)
+      ? bpTime.slice(0, 16)
+      : nowDatetimePhoenix();
+    const entry = logBP({
+      systolic: sysStr,
+      diastolic: diaStr,
+      pulse: pulseStr || null,
+      datetime: time,
+      source: 'shortcut',
+    });
+    if (entry) summary.push(`BP ${entry.systolic}/${entry.diastolic}${entry.pulse ? '·' + entry.pulse : ''}`);
+  }
+
+  // BP — batch backfill: "YYYY-MM-DDTHH:MM:SYS/DIA[/PULSE]"
+  if (bpBatch) {
+    let count = 0;
+    for (const piece of bpBatch.split(',')) {
+      const match = piece.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}):(\d+)\/(\d+)(?:\/(\d+))?$/);
+      if (!match) continue;
+      const [, time, sys, dia, pulse] = match;
+      const entry = logBP({
+        systolic: sys,
+        diastolic: dia,
+        pulse: pulse || null,
+        datetime: time,
+        source: 'shortcut',
+      });
+      if (entry) count++;
+    }
+    if (count) summary.push(`${count} BP reading${count === 1 ? '' : 's'}`);
+  }
+
+  if (summary.length) save();
+
+  // Strip all automation params from URL so refresh doesn't re-import.
+  const consumed = ['steps', 'steps_batch', 'date', 'systolic', 'diastolic', 'pulse', 'bp_time', 'bp_batch'];
+  consumed.forEach(k => searchParams.delete(k));
+  // Hash params — preserve the #data= import variant, drop our own keys.
+  let newHash = location.hash;
+  if (hashParams.toString()) {
+    consumed.forEach(k => hashParams.delete(k));
+    const remaining = hashParams.toString();
+    newHash = remaining ? '#' + remaining : '';
+  }
+  const qs = searchParams.toString();
+  history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + newHash);
+
+  if (summary.length) {
     renderAll();
-    flash(`Synced ${imported} step entr${imported === 1 ? 'y' : 'ies'} from Shortcut`);
+    flash(`Synced: ${summary.join(' + ')}`);
   }
 }
 
-// ─── Apple Health export.xml import (steps backfill) ─────────────────────
-// Reads HKQuantityTypeIdentifierStepCount records, groups by Phoenix-local
-// date (using startDate), sums per day, and records each day as a single
-// source='healthkit' entry (which replaces any prior sync for that date).
-// Manual entries on the same day remain.
-function parseAppleHealthXML(xmlText) {
+// ─── Apple Health export.xml import (steps + BP backfill) ────────────────
+// Reads:
+//   - HKQuantityTypeIdentifierStepCount records (sum per Phoenix-local date)
+//   - HKCorrelationTypeIdentifierBloodPressure correlations (each wraps a
+//     Systolic + Diastolic Record pair; pull both via direct children).
+// Steps: one source='healthkit' entry per date (replaces prior sync entries).
+// BP: one entry per correlation, idempotent via logBP() dedup logic.
+function parseAppleHealth(xmlText) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(xmlText, 'application/xml');
   const parseErr = doc.querySelector('parsererror');
   if (parseErr) throw new Error('Could not parse export.xml — file may be corrupt.');
 
-  const records = doc.querySelectorAll('Record[type="HKQuantityTypeIdentifierStepCount"]');
-  if (!records.length) throw new Error('No StepCount records found in export.xml. Make sure you exported from Apple Health (Health app → profile → Export All Health Data).');
-
-  // Convert each record's startDate to a Phoenix-local YYYY-MM-DD and sum.
-  const byDate = new Map();
-  records.forEach(rec => {
+  // --- Steps ---
+  const stepsByDate = new Map();
+  const stepRecords = doc.querySelectorAll('Record[type="HKQuantityTypeIdentifierStepCount"]');
+  stepRecords.forEach(rec => {
     const start = rec.getAttribute('startDate');
-    const valueStr = rec.getAttribute('value');
-    const value = Number(valueStr);
+    const value = Number(rec.getAttribute('value'));
     if (!start || !Number.isFinite(value) || value <= 0) return;
-    // Apple Health dates look like "2026-05-15 09:23:11 -0700". JS Date parses this fine.
     const d = new Date(start);
     if (isNaN(d.getTime())) return;
-    // Format date in Phoenix tz
-    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: PHOENIX_TZ, year: 'numeric', month: '2-digit', day: '2-digit' })
-      .formatToParts(d);
-    const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
-    const dateKey = `${map.year}-${map.month}-${map.day}`;
-    byDate.set(dateKey, (byDate.get(dateKey) || 0) + value);
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: PHOENIX_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(d);
+    const m = Object.fromEntries(parts.map(p => [p.type, p.value]));
+    const dateKey = `${m.year}-${m.month}-${m.day}`;
+    stepsByDate.set(dateKey, (stepsByDate.get(dateKey) || 0) + value);
   });
-  return byDate;
+
+  // --- Blood Pressure ---
+  // Apple Health groups sys + dia into a single Correlation element.
+  const bpEntries = [];
+  const correlations = doc.querySelectorAll('Correlation[type="HKCorrelationTypeIdentifierBloodPressure"]');
+  correlations.forEach(corr => {
+    const start = corr.getAttribute('startDate');
+    if (!start) return;
+    const d = new Date(start);
+    if (isNaN(d.getTime())) return;
+    let sys = null, dia = null;
+    // Direct children only — don't accidentally pull values from a deeper tree.
+    Array.from(corr.children).forEach(child => {
+      if (child.tagName !== 'Record') return;
+      const type = child.getAttribute('type');
+      const val = Number(child.getAttribute('value'));
+      if (!Number.isFinite(val)) return;
+      if (type === 'HKQuantityTypeIdentifierBloodPressureSystolic') sys = Math.round(val);
+      else if (type === 'HKQuantityTypeIdentifierBloodPressureDiastolic') dia = Math.round(val);
+    });
+    if (sys == null || dia == null) return;
+    // Datetime as YYYY-MM-DDTHH:MM in Phoenix tz (matches datetime-local format)
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: PHOENIX_TZ,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit',
+      hour12: false,
+    }).formatToParts(d);
+    const m = Object.fromEntries(parts.map(p => [p.type, p.value]));
+    bpEntries.push({
+      datetime: `${m.year}-${m.month}-${m.day}T${m.hour}:${m.minute}`,
+      systolic: sys,
+      diastolic: dia,
+      pulse: null,
+      sourceTime: d.getTime(),
+    });
+  });
+
+  return { stepsByDate, bpEntries };
 }
 
 async function handleAppleHealthFile(file) {
@@ -4509,35 +4689,61 @@ async function handleAppleHealthFile(file) {
   const setStatus = (msg, kind = '') => { if (status) { status.textContent = msg; status.dataset.kind = kind; } };
   setStatus('Reading file…');
   try {
-    let xmlText;
     if (file.name.toLowerCase().endsWith('.zip')) {
       setStatus('ZIP archives need to be unzipped first. Extract export.xml from the ZIP, then upload that .xml file directly.', 'bad');
       return;
     }
-    xmlText = await file.text();
-    setStatus('Parsing step records…');
-    const byDate = parseAppleHealthXML(xmlText);
-    if (!byDate.size) { setStatus('No step records found in the file.', 'bad'); return; }
+    if (file.size > 250 * 1024 * 1024) {
+      setStatus(`File is ${(file.size / 1024 / 1024).toFixed(0)} MB — Safari may struggle to parse. Try the desktop browser if mobile fails.`, 'warn');
+    }
+    const xmlText = await file.text();
+    setStatus('Parsing health records…');
+    const { stepsByDate, bpEntries } = parseAppleHealth(xmlText);
+    if (!stepsByDate.size && !bpEntries.length) {
+      setStatus('No StepCount or BloodPressure records found. Make sure you exported from Apple Health (Health app → profile → Export All Health Data).', 'bad');
+      return;
+    }
 
-    // Limit to most recent 365 days to keep the data set manageable.
+    // Limit to last 365 days for both data types
     const today = todayISO();
     const cutoff = new Date(today + 'T00:00:00-07:00');
     cutoff.setDate(cutoff.getDate() - 365);
     const cutoffStr = cutoff.toISOString().slice(0, 10);
 
-    const eligible = [...byDate.entries()].filter(([date]) => date >= cutoffStr);
-    if (!eligible.length) { setStatus('No step records in the last 365 days.', 'bad'); return; }
+    const eligibleSteps = [...stepsByDate.entries()].filter(([date]) => date >= cutoffStr);
+    const eligibleBP = bpEntries.filter(b => b.datetime.slice(0, 10) >= cutoffStr);
+    const totalStepDays = eligibleSteps.length;
+    const totalSteps = eligibleSteps.reduce((sum, [, v]) => sum + v, 0);
+    const totalBP = eligibleBP.length;
 
-    const totalRecords = eligible.reduce((sum, [, v]) => sum + v, 0);
-    const ok = confirm(`Import ${eligible.length} days of step data (${Math.round(totalRecords).toLocaleString()} total steps from the last 365 days)? This replaces existing Apple-Watch-sourced entries for those dates; manual entries are kept.`);
+    if (!totalStepDays && !totalBP) {
+      setStatus('No records in the last 365 days.', 'bad');
+      return;
+    }
+
+    const parts = [];
+    if (totalStepDays) parts.push(`${totalStepDays} days of steps (${Math.round(totalSteps).toLocaleString()} total)`);
+    if (totalBP) parts.push(`${totalBP} BP reading${totalBP === 1 ? '' : 's'}`);
+    const ok = confirm(`Import from Apple Health: ${parts.join(' + ')}? Steps will replace existing Apple-Watch-sourced entries; BP readings are deduplicated by datetime + systolic + diastolic so re-imports are safe.`);
     if (!ok) { setStatus('Import cancelled.'); return; }
 
-    for (const [date, count] of eligible) {
+    for (const [date, count] of eligibleSteps) {
       logSteps(Math.round(count), { date, source: 'healthkit', skipRender: true });
     }
+    let bpAdded = 0;
+    let bpSkipped = 0;
+    for (const b of eligibleBP) {
+      const before = state.bp.length;
+      logBP({ systolic: b.systolic, diastolic: b.diastolic, datetime: b.datetime, source: 'healthkit' });
+      if (state.bp.length > before) bpAdded++; else bpSkipped++;
+    }
+    save();
     renderAll();
-    setStatus(`Imported ${eligible.length} days · ${Math.round(totalRecords).toLocaleString()} total steps.`, 'good');
-    flash(`Imported ${eligible.length} days of steps from Apple Health`);
+    const summary = [];
+    if (totalStepDays) summary.push(`${totalStepDays} step day${totalStepDays === 1 ? '' : 's'}`);
+    if (bpAdded) summary.push(`${bpAdded} BP reading${bpAdded === 1 ? '' : 's'}${bpSkipped ? ` (${bpSkipped} dupes skipped)` : ''}`);
+    setStatus(`Imported ${summary.join(' + ')}.`, 'good');
+    flash(`Imported from Apple Health: ${summary.join(' + ')}`);
   } catch (err) {
     console.error('Health import failed', err);
     setStatus('Import failed: ' + (err.message || String(err)), 'bad');
