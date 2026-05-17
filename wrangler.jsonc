@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "kidney-advisor",
+  "name": "kidney-sync",
   "compatibility_date": "2026-05-17",
   "observability": {
     "enabled": true
