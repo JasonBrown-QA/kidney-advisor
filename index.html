@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Kidney Advisor</title>
-<link rel="stylesheet" href="styles.css?v=20260517-1530" />
+<link rel="stylesheet" href="styles.css?v=20260517-1600" />
 
 <!-- PWA / iOS home-screen app -->
 <link rel="manifest" href="manifest.json" />
@@ -335,8 +335,38 @@
           <code class="steps-shortcut-url" style="display:block;margin-top:4px">https://jasonbrown-qa.github.io/kidney-advisor/?steps=<em>[Statistic]</em>&amp;systolic=<em>[Sys]</em>&amp;diastolic=<em>[Dia]</em>&amp;bp_time=<em>[WhenStr]</em></code>
           <p class="hint">The app consumes every param it recognizes in one shot — set up once, sync everything together.</p>
 
-          <p class="hint" style="margin-top:14px;font-weight:700;color:var(--text)">Make it fully automatic</p>
-          <p class="hint">Two options — pick whichever fits how you log:</p>
+          <p class="hint" style="margin-top:14px;font-weight:700;color:var(--text)">Make it <em>truly</em> automatic (hands-off, no app-switch)</p>
+          <p class="hint">The setup above opens the PWA each time the Shortcut runs. To bypass that — Smart BP records, reading appears in the app with zero taps and zero app-switch — replace <em>Open URLs</em> with <em>Get Contents of URL</em> pointed at a tiny Cloudflare Worker that writes straight into your sync gist. The PWA's existing silent auto-pull picks the new reading up on its next focus.</p>
+          <p class="hint" style="margin-top:6px"><strong>1. Deploy the bridge Worker (~5 min, free):</strong></p>
+          <ol class="steps-sync-steps">
+            <li>Sign in to <a href="https://dash.cloudflare.com" target="_blank">dash.cloudflare.com</a> → <strong>Workers &amp; Pages</strong> → <strong>Create</strong> → <strong>Create Worker</strong>. Name it <code>kidney-sync</code> (or anything).</li>
+            <li>Tap <strong>Deploy</strong> on the starter Worker, then <strong>Edit Code</strong>.</li>
+            <li>Replace the entire <code>worker.js</code> with the contents of <code>worker/index.js</code> from this repo (<a href="https://github.com/JasonBrown-QA/kidney-advisor/blob/main/worker/index.js" target="_blank">view on GitHub</a>). Tap <strong>Deploy</strong>.</li>
+            <li>Back in the Worker overview → <strong>Settings</strong> → <strong>Variables and Secrets</strong> → add three <strong>secrets</strong>:
+              <ul>
+                <li><code>GIST_ID</code> — the ID of your kidney-advisor.json gist. Find it via Settings → Cross-device auto-sync; or open <a href="https://gist.github.com/" target="_blank">gist.github.com</a>, click your <code>kidney-advisor.json</code>, copy the long hex from the URL.</li>
+                <li><code>GH_TOKEN</code> — the same GitHub PAT (with <code>gist</code> scope) the PWA uses for cloud sync. Generate one at <a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=Kidney+Advisor+Worker" target="_blank">github.com/settings/tokens/new</a> if you want a Worker-only token.</li>
+                <li><code>SYNC_TOKEN</code> — any opaque random string you make up (32+ chars). The Shortcut will send this to authenticate.</li>
+              </ul>
+            </li>
+            <li>Note your Worker URL — looks like <code>https://kidney-sync.&lt;your-name&gt;.workers.dev</code>. Test it: hit <code>https://kidney-sync.&lt;your-name&gt;.workers.dev/health</code> in a browser. Should return <code>{"ok":true,"service":"kidney-advisor-sync"}</code>.</li>
+          </ol>
+          <p class="hint" style="margin-top:10px"><strong>2. Update your Sync BP Shortcut to use the Worker (1 min):</strong></p>
+          <ol class="steps-sync-steps">
+            <li>Open the existing <strong>Sync BP</strong> Shortcut. Delete the last two actions (<em>URL</em> and <em>Open URLs</em>).</li>
+            <li>Add action <strong>Text</strong> → paste:
+              <code class="steps-shortcut-url">https://kidney-sync.&lt;your-name&gt;.workers.dev/sync?token=&lt;SYNC_TOKEN&gt;&amp;systolic=<em>[Sys]</em>&amp;diastolic=<em>[Dia]</em>&amp;bp_time=<em>[WhenStr]</em></code>
+              Replace <code>&lt;your-name&gt;</code> with your Worker subdomain and <code>&lt;SYNC_TOKEN&gt;</code> with the random string you set as a secret. Drag the Sys / Dia / WhenStr variable chips into the bracketed placeholders.
+            </li>
+            <li>Add action <strong>Get Contents of URL</strong>. Tap <strong>Show More</strong> → Method = <strong>GET</strong>. URL field will auto-pick the Text from the previous step.</li>
+            <li>(Optional) Add action <strong>Show Notification</strong> → Title = <em>BP synced</em> → Body = (drag the <em>Contents of URL</em> variable in) — gives you a tiny banner confirming the sync. Skip if you want truly silent operation.</li>
+            <li>Tap <strong>Done</strong>.</li>
+          </ol>
+          <p class="hint" style="margin-top:10px"><strong>3. Verify:</strong> Log a fake BP reading in Smart BP. Wait ~10 seconds. Open the PWA — the reading should already be there (no toast / URL handling needed). The Worker put it in the gist, and the PWA's silent auto-pull on focus fetched it.</p>
+          <p class="hint" style="margin-top:8px;font-style:italic">Same pattern works for steps: pass <code>?token=...&amp;steps=[Statistic]</code>, or combined: <code>?token=...&amp;steps=[Statistic]&amp;systolic=[Sys]&amp;diastolic=[Dia]&amp;bp_time=[WhenStr]</code>.</p>
+          <hr style="margin:14px 0;border:0;border-top:1px solid var(--border)" />
+          <p class="hint" style="margin-top:14px;font-weight:700;color:var(--text)">Or — simpler-but-not-quite-as-hands-off</p>
+          <p class="hint">If you don't want to set up the Worker, the original <em>Open URLs</em> path still works — readings just briefly bring the PWA forward when the Shortcut fires. Two automation triggers cover most cases:</p>
           <p class="hint" style="margin-top:6px"><strong>Option A — Time-of-day (steps):</strong> Shortcuts → bottom tab <strong>Automation</strong> → <strong>+</strong> → <em>Time of Day</em> → e.g. 9:00 PM → Daily → action: <strong>Run Shortcut</strong> → pick "Sync Steps" → toggle off <strong>Ask Before Running</strong>. iOS fires it nightly with no taps.</p>
           <p class="hint" style="margin-top:6px"><strong>Option B — Health Update trigger (BP from Smart BP / any cuff):</strong> Shortcuts → <strong>Automation</strong> → <strong>+</strong> → <em>Health</em> → <em>Vital category</em> = <strong>Heart</strong> → toggle on <strong>Blood Pressure</strong> → action: <strong>Run Shortcut</strong> → pick "Sync BP" → toggle off <strong>Ask Before Running</strong> → tap <strong>Done</strong>. Every time Smart BP (or any cuff app) writes a new reading into Apple Health, iOS will fire the Shortcut and the value lands in the app within seconds — completely hands-off.</p>
           <p class="hint" style="margin-top:6px"><em>Note:</em> Smart BP must be authorized to write to Apple Health (Smart BP app → Settings → Health Sync). On older iOS, the "Health" automation trigger may instead live under <em>Apple Health → Vital category</em>.</p>
@@ -806,7 +836,7 @@
         <button id="btn-cloud-disconnect" class="danger" hidden>Disconnect</button>
       </div>
       <div id="cloud-sync-status" class="hint" style="margin-top:8px"></div>
-      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260517-1530 — Merge-import + Smart BP Health Update auto-trigger recipe</span></p>
+      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260517-1600 — Cloudflare Worker bridge for hands-off Smart BP / Apple Health sync</span></p>
     </div>
 
     <div class="card">
@@ -848,6 +878,6 @@
 </div>
 
 <script src="foods.js"></script>
-<script src="app.js?v=20260517-1530"></script>
+<script src="app.js?v=20260517-1600"></script>
 </body>
 </html>

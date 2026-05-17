@@ -1,0 +1,8 @@
+name = "kidney-sync"
+main = "index.js"
+compatibility_date = "2025-01-01"
+
+# Secrets (set via `wrangler secret put` or the Cloudflare dashboard):
+#   GIST_ID    — ID of your kidney-advisor.json gist
+#   GH_TOKEN   — GitHub PAT with `gist` scope
+#   SYNC_TOKEN — opaque shared secret the iOS Shortcut sends

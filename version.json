@@ -1,4 +1,4 @@
 {
-  "build": "20260517-1530",
-  "summary": "Merge-import (labs+BP+meds without wiping recent data) + Smart BP Health Update auto-trigger"
+  "build": "20260517-1600",
+  "summary": "Cloudflare Worker bridge for hands-off Smart BP / Apple Health sync"
 }
