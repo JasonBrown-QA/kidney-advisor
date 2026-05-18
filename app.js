@@ -4453,13 +4453,15 @@ async function init() {
   setupPullToRefresh();
   renderCloudSyncUI();
 
-  // On launch, if cloud sync is configured, silently pull if the cloud copy
-  // is newer. No confirm prompt — user wants frictionless catch-up on open.
-  // Last-write-wins already handles the rare conflict case.
+  // On launch, if cloud sync is configured, silently smart-merge with the
+  // cloud copy. Smart merge is non-destructive — local-only entries are
+  // preserved, remote entries are added, id collisions go to the side with
+  // the fresher state-level lastModified. This is what pull-to-refresh,
+  // visibilitychange, and the periodic auto-poll all use.
   if (cloudGetPat()) {
-    cloudPullIfNewer({ prompt: false }).then(result => {
+    cloudPullIfNewer().then(result => {
       if (result && result.pulled) {
-        setCloudStatus('Auto-synced from cloud · ' + phx.datetime(result.remoteTime) + ' AZ');
+        setCloudStatus('Merged cloud changes · ' + phx.datetime(Date.now()) + ' AZ');
       }
     }).catch(err => {
       console.warn('Cloud pull on startup failed', err);
@@ -4483,9 +4485,9 @@ async function init() {
     const now = Date.now();
     if (now - lastVisibilityPull < 30 * 1000) return;
     lastVisibilityPull = now;
-    cloudPullIfNewer({ prompt: false }).then(result => {
+    cloudPullIfNewer().then(result => {
       if (result && result.pulled) {
-        setCloudStatus('Auto-synced from cloud · ' + phx.datetime(result.remoteTime) + ' AZ');
+        setCloudStatus('Merged cloud changes · ' + phx.datetime(Date.now()) + ' AZ');
       }
     }).catch(err => {
       console.warn('Visibility pull failed', err);
@@ -4499,6 +4501,36 @@ async function init() {
   // Refresh at midnight so Today's Totals reset and the prior day rolls into
   // the history table without requiring a page reload.
   scheduleMidnightRefresh();
+
+  // Periodic auto-poll while the PWA is open and visible. With smart merge,
+  // new cloud entries (Worker writes, other-device pushes) appear in the app
+  // within ~60s without needing pull-to-refresh or a Shortcut. The interval
+  // is paused while the tab is hidden to avoid burning GitHub API rate.
+  startCloudAutoPoll();
+}
+
+// Poll the gist every CLOUD_POLL_INTERVAL_MS while the page is visible.
+// Smart-merge silently folds any new entries in. The first poll fires
+// CLOUD_POLL_INTERVAL_MS after init() — the on-open pull already happened
+// via cloudPullIfNewer above, so we don't double-hit on launch.
+const CLOUD_POLL_INTERVAL_MS = 60 * 1000;
+let cloudPollTimer = null;
+function startCloudAutoPoll() {
+  if (cloudPollTimer) clearInterval(cloudPollTimer);
+  cloudPollTimer = setInterval(() => {
+    if (document.visibilityState !== 'visible') return;
+    if (!cloudGetPat()) return;
+    if (cloudSyncing) return;
+    cloudPullIfNewer().then(result => {
+      if (result && result.pulled) {
+        // Smart-merge wrote new entries into local state — already re-rendered
+        // by cloudPullIfNewer. Surface a quiet status update.
+        setCloudStatus('Auto-merged from cloud · ' + phx.datetime(Date.now()) + ' AZ');
+      }
+    }).catch(err => {
+      console.warn('Auto-poll failed', err);
+    });
+  }, CLOUD_POLL_INTERVAL_MS);
 }
 
 // Pull-to-refresh — iOS standalone PWAs don't get the native gesture, so we
@@ -4549,7 +4581,7 @@ function setupPullToRefresh() {
       indicator.style.transform = 'translateY(0)';
       if (cloudGetPat()) {
         indicator.textContent = '↻ Syncing from cloud…';
-        cloudSyncNow({ prompt: false }).then(() => {
+        cloudSyncNow().then(() => {
           indicator.textContent = '✓ Synced';
           setTimeout(() => { indicator.style.transform = 'translateY(-100%)'; }, 800);
         }).catch(err => {
@@ -5009,7 +5041,103 @@ async function cloudPush() {
   });
 }
 
-async function cloudPullIfNewer({ prompt = true } = {}) {
+// Non-destructive union of local + remote state. Entries are matched by `id`
+// so local-only additions are never lost when the cloud copy has a newer
+// `lastModified`. On id collisions, the side with the newer state-level
+// `lastModified` wins (best heuristic we have without per-entry timestamps).
+//
+// Why this exists: prior behaviour was "if remoteTime > localTime, replace
+// local entirely with remote." That silently wiped iPhone-side entries that
+// hadn't yet been pushed when another device's writes (or the BP sync
+// Worker) bumped the gist's `lastModified` past the iPhone's. Smart merge
+// makes pulls additive — they can never destroy data, only add to it.
+function smartMerge(localState, remoteState) {
+  if (!remoteState || typeof remoteState !== 'object') return localState;
+
+  const lt = Number(localState && localState.lastModified) || 0;
+  const rt = Number(remoteState.lastModified) || 0;
+  const preferRemote = rt > lt;
+
+  // Start from blank defaults so we always have a complete shape.
+  const merged = { ...blankState(), ...localState };
+
+  // Array fields with stable per-entry ids: union by id, preferred side wins on collision.
+  const ARRAY_KEYS = ['labs', 'bp', 'meds', 'diet', 'steps', 'symptoms', 'questions'];
+  for (const key of ARRAY_KEYS) {
+    const local = Array.isArray(localState[key]) ? localState[key] : [];
+    const remote = Array.isArray(remoteState[key]) ? remoteState[key] : [];
+    const byId = new Map();
+    // Add the non-preferred side first, then overwrite with preferred — so preferred wins on id collision.
+    const first = preferRemote ? local : remote;
+    const second = preferRemote ? remote : local;
+    for (const item of first) {
+      if (!item) continue;
+      const id = item.id || JSON.stringify([item.date, item.datetime, item.systolic, item.diastolic, item.name]);
+      byId.set(id, item);
+    }
+    for (const item of second) {
+      if (!item) continue;
+      const id = item.id || JSON.stringify([item.date, item.datetime, item.systolic, item.diastolic, item.name]);
+      byId.set(id, item);
+    }
+    merged[key] = [...byId.values()];
+  }
+
+  // Sort the date/datetime-bearing arrays.
+  ['labs', 'symptoms', 'diet', 'steps'].forEach(k => {
+    if (Array.isArray(merged[k])) merged[k].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  });
+  if (Array.isArray(merged.bp)) merged.bp.sort((a, b) => (a.datetime || '').localeCompare(b.datetime || ''));
+
+  // Settings / reminders: object merge — preferred side wins on key collision, both sides contribute keys.
+  if (preferRemote) {
+    merged.settings = { ...DEFAULT_SETTINGS, ...(localState.settings || {}), ...(remoteState.settings || {}) };
+    merged.reminders = { ...DEFAULT_REMINDERS, ...(localState.reminders || {}), ...(remoteState.reminders || {}) };
+    merged.visit = remoteState.visit || localState.visit || { date: '', provider: '', notes: '' };
+  } else {
+    merged.settings = { ...DEFAULT_SETTINGS, ...(remoteState.settings || {}), ...(localState.settings || {}) };
+    merged.reminders = { ...DEFAULT_REMINDERS, ...(remoteState.reminders || {}), ...(localState.reminders || {}) };
+    merged.visit = localState.visit || remoteState.visit || { date: '', provider: '', notes: '' };
+  }
+
+  // medLog — union of dates, union of meds within a date.
+  const localML = (localState && localState.medLog) || {};
+  const remoteML = remoteState.medLog || {};
+  const allMLDates = new Set([...Object.keys(localML), ...Object.keys(remoteML)]);
+  merged.medLog = {};
+  for (const date of allMLDates) {
+    if (preferRemote) {
+      merged.medLog[date] = { ...(localML[date] || {}), ...(remoteML[date] || {}) };
+    } else {
+      merged.medLog[date] = { ...(remoteML[date] || {}), ...(localML[date] || {}) };
+    }
+  }
+
+  // advisorChat — union by id (messages have ids), sort by ts.
+  const localChat = Array.isArray(localState.advisorChat) ? localState.advisorChat : [];
+  const remoteChat = Array.isArray(remoteState.advisorChat) ? remoteState.advisorChat : [];
+  const chatById = new Map();
+  for (const m of [...localChat, ...remoteChat]) {
+    if (m && m.id) chatById.set(m.id, m);
+  }
+  merged.advisorChat = [...chatById.values()].sort((a, b) => (Number(a.ts) || 0) - (Number(b.ts) || 0));
+
+  // Bump lastModified to max — the merged result is at least as fresh as either side.
+  merged.lastModified = Math.max(lt, rt);
+  return merged;
+}
+
+// Did the smart-merge actually produce content different from `before`?
+// Used to decide whether to push the merged state up so the cloud catches up.
+function stateChanged(before, after) {
+  try {
+    return JSON.stringify(before) !== JSON.stringify(after);
+  } catch { return true; }
+}
+
+async function cloudPullIfNewer({ prompt = false } = {}) {
+  // `prompt` is now mostly vestigial — smart merge is never destructive, so
+  // we don't need to ask. Kept in the signature for callers that still pass it.
   const gistId = await cloudFindOrCreateGist();
   const gist = await ghFetch('/gists/' + gistId);
   const file = gist.files && gist.files[GIST_FILENAME];
@@ -5021,24 +5149,28 @@ async function cloudPullIfNewer({ prompt = true } = {}) {
   }
   const remoteTime = remote.lastModified || 0;
   const localTime = state.lastModified || 0;
-  if (remoteTime <= localTime + 1000) {
-    return { pulled: false, reason: 'local-up-to-date', remoteTime, localTime };
+
+  // Even when remoteTime <= localTime we still merge — the cloud may hold
+  // entries our local doesn't know about yet (e.g. a Worker write that
+  // didn't bump lastModified far enough due to clock skew). Cheap to merge.
+  const before = state;
+  const merged = smartMerge(state, remote);
+  if (!stateChanged(before, merged)) {
+    return { pulled: false, reason: 'identical', remoteTime, localTime };
   }
-  if (prompt) {
-    const when = remoteTime ? phx.datetime(remoteTime) : 'unknown time';
-    if (!confirm('Cloud has newer data (saved ' + when + '). Replace local data with the cloud copy?')) {
-      return { pulled: false, reason: 'user-declined' };
-    }
-  }
-  state = mergeState(remote);
+  state = merged;
   migrateUtcShiftedDates();
-  save({ skipCloud: true });
+  // Bump our lastModified so the post-merge push wins on the other side.
+  state.lastModified = Math.max(state.lastModified || 0, Date.now());
+  save(); // schedules cloud push of merged state — so cloud catches up too
   renderAll();
   return { pulled: true, remoteTime };
 }
 
-// Two-way sync: pull if remote newer; otherwise push if local newer.
-async function cloudSyncNow({ prompt = false } = {}) {
+// Two-way smart-merge sync: read remote, union with local, write merged result back.
+// Never destroys data on either side. Replaces the prior "pull-or-push" semantics
+// with "always-merge".
+async function cloudSyncNow() {
   if (cloudSyncing) return { skipped: true };
   if (!cloudGetPat()) throw new Error('No GitHub token saved');
   cloudSyncing = true;
@@ -5051,30 +5183,38 @@ async function cloudSyncNow({ prompt = false } = {}) {
     if (file && file.content) {
       try { remote = JSON.parse(file.content); } catch (e) { remote = null; }
     }
-    const remoteTime = (remote && remote.lastModified) || 0;
-    const localTime = state.lastModified || 0;
 
-    if (remote && remoteTime > localTime + 1000) {
-      if (!prompt || confirm('Cloud has newer data (' + phx.datetime(remoteTime) + ' AZ). Pull from cloud and replace local?')) {
-        state = mergeState(remote);
-        migrateUtcShiftedDates();
-        save({ skipCloud: true });
-        renderAll();
-        setCloudStatus('Pulled from cloud · ' + phx.datetime(remoteTime) + ' AZ');
-        return { direction: 'pull' };
-      }
-      setCloudStatus('Pull declined — local kept');
-      return { direction: 'none' };
+    if (!remote) {
+      // First-time push to a fresh gist
+      await ghFetch('/gists/' + gistId, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          files: { [GIST_FILENAME]: { content: JSON.stringify(state, null, 2) } },
+        }),
+      });
+      setCloudStatus('Initialized cloud · ' + phx.datetime(Date.now()) + ' AZ');
+      return { direction: 'init' };
     }
-    // Push local up
+
+    const before = state;
+    const merged = smartMerge(state, remote);
+    const localChanged = stateChanged(before, merged);
+    state = merged;
+    if (localChanged) {
+      migrateUtcShiftedDates();
+      state.lastModified = Math.max(state.lastModified || 0, Date.now());
+      save({ skipCloud: true });
+      renderAll();
+    }
+    // Always push the merged result — that's how cloud catches up to local-only entries.
     await ghFetch('/gists/' + gistId, {
       method: 'PATCH',
       body: JSON.stringify({
         files: { [GIST_FILENAME]: { content: JSON.stringify(state, null, 2) } },
       }),
     });
-    setCloudStatus('Pushed to cloud · ' + phx.datetime(state.lastModified || Date.now()) + ' AZ');
-    return { direction: 'push' };
+    setCloudStatus('Synced · ' + phx.datetime(Date.now()) + ' AZ' + (localChanged ? ' · merged remote changes' : ''));
+    return { direction: 'merge', localChanged };
   } catch (e) {
     setCloudStatus('Sync failed: ' + e.message);
     throw e;
@@ -5167,7 +5307,7 @@ document.getElementById('btn-cloud-save-pat').addEventListener('click', async ()
   renderCloudSyncUI();
   setCloudStatus('Token saved. Connecting…');
   try {
-    await cloudSyncNow({ prompt: true });
+    await cloudSyncNow();
     renderCloudSyncUI();
   } catch (e) {
     // Status already set by cloudSyncNow
@@ -5175,7 +5315,7 @@ document.getElementById('btn-cloud-save-pat').addEventListener('click', async ()
 });
 
 document.getElementById('btn-cloud-sync').addEventListener('click', async () => {
-  try { await cloudSyncNow({ prompt: true }); }
+  try { await cloudSyncNow(); }
   catch (e) { /* status set by helper */ }
 });
 

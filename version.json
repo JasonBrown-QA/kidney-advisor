@@ -1,4 +1,4 @@
 {
-  "build": "20260517-1600",
-  "summary": "Cloudflare Worker bridge for hands-off Smart BP / Apple Health sync"
+  "build": "20260518-0800",
+  "summary": "Non-destructive smart-merge cloud sync + 60s auto-poll while app open"
 }
