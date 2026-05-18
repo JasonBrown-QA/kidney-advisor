@@ -1,4 +1,4 @@
 {
-  "build": "20260518-0800",
-  "summary": "Non-destructive smart-merge cloud sync + 60s auto-poll while app open"
+  "build": "20260518-0810",
+  "summary": "Merge-from-pasted-text button — restore medical history without a file picker"
 }

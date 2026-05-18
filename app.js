@@ -3252,6 +3252,59 @@ function wireStepsCard() {
   }
 }
 
+// Parses whatever's in the paste-import textarea (raw JSON or a sync URL
+// containing #data=...). Returns the parsed object or null if invalid (with
+// an alert already shown to the user). Shared by Replace and Merge buttons.
+async function parsePastedImportContent() {
+  const raw = document.getElementById('paste-import-text').value.trim();
+  if (!raw) { alert('Paste JSON or a sync URL into the box first.'); return null; }
+  const hashMatch = raw.match(/#data=([^\s]+)/);
+  if (hashMatch) {
+    try {
+      const payload = decodeURIComponent(hashMatch[1]);
+      const json = payload.startsWith('gz1:')
+        ? await gunzipBase64(payload.slice(4))
+        : new TextDecoder().decode(Uint8Array.from(atob(payload), c => c.charCodeAt(0)));
+      return JSON.parse(json);
+    } catch (err) {
+      alert('Could not decode the pasted URL: ' + err.message);
+      return null;
+    }
+  }
+  // Strip iOS smart punctuation that breaks JSON.parse, then parse.
+  const text = raw
+    .replace(/[“”„‟″‶]/g, '"')
+    .replace(/[‘’‚‛′‵]/g, "'")
+    .replace(/ /g, ' ');
+  try { return JSON.parse(text); }
+  catch (err) { alert('That doesn\'t look like valid JSON or a sync URL: ' + err.message); return null; }
+}
+
+document.getElementById('btn-paste-merge')?.addEventListener('click', async () => {
+  const incoming = await parsePastedImportContent();
+  if (!incoming) return;
+  const labs = Array.isArray(incoming.labs) ? incoming.labs.length : 0;
+  const bp   = Array.isArray(incoming.bp) ? incoming.bp.length : 0;
+  const meds = Array.isArray(incoming.meds) ? incoming.meds.length : 0;
+  const syms = Array.isArray(incoming.symptoms) ? incoming.symptoms.length : 0;
+  const parts = [];
+  if (labs) parts.push(`${labs} labs`);
+  if (bp) parts.push(`${bp} BP readings`);
+  if (meds) parts.push(`${meds} meds`);
+  if (syms) parts.push(`${syms} symptom entries`);
+  if (!parts.length) { alert('Nothing to merge — pasted content has no labs / bp / meds / symptoms.'); return; }
+  if (!confirm(`Merge ${parts.join(' + ')} from the pasted content? Existing entries are deduplicated; diet, steps, advisor chat, settings, reminders are NOT touched.`)) return;
+  try {
+    const r = mergeImportData(incoming);
+    save();
+    renderAll();
+    document.getElementById('paste-import-text').value = '';
+    flash(summarizeMerge(r));
+  } catch (err) {
+    alert('Merge failed: ' + err.message);
+  }
+});
+
 document.getElementById('btn-paste-import').addEventListener('click', async () => {
   const raw = document.getElementById('paste-import-text').value.trim();
   if (!raw) {

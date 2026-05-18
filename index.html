@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Kidney Advisor</title>
-<link rel="stylesheet" href="styles.css?v=20260518-0800" />
+<link rel="stylesheet" href="styles.css?v=20260518-0810" />
 
 <!-- PWA / iOS home-screen app -->
 <link rel="manifest" href="manifest.json" />
@@ -801,12 +801,13 @@
       <p class="hint"><strong>Replace</strong> wipes all current data and loads the file. <strong>Merge</strong> only adds labs, BP readings, medications, and symptom entries — duplicates are skipped, and recent diet, steps, advisor chat, settings, and reminders are kept untouched. Use Merge to restore historical health records without losing recent tracking.</p>
       <details style="margin-top:14px">
         <summary style="cursor:pointer;font-weight:600">Paste JSON instead (no file needed — works on iPhone)</summary>
-        <p class="hint" style="margin-top:8px">Copy the contents of a Kidney Advisor export, paste it here, then tap Import. Useful when you can't get the file onto your phone.</p>
+        <p class="hint" style="margin-top:8px">Copy the contents of a Kidney Advisor export (or a medical-history JSON file), paste it here, then tap the action you want.</p>
         <textarea id="paste-import-text" rows="6" placeholder='{"labs":[...],"bp":[...],...} — or paste a full sync URL containing #data=...' autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style="width:100%;font-family:monospace;font-size:12px"></textarea>
-        <div class="row" style="margin-top:8px">
-          <button id="btn-paste-import" class="secondary">Import pasted text</button>
+        <div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap">
+          <button id="btn-paste-import" class="secondary">Replace from pasted text</button>
+          <button id="btn-paste-merge" class="secondary">Merge from pasted text</button>
         </div>
-        <p class="hint" style="margin-top:8px">Accepts either raw JSON or a full sync URL — the app will auto-detect.</p>
+        <p class="hint" style="margin-top:8px"><strong>Replace</strong> wipes all current data and uses what's pasted. <strong>Merge</strong> only adds labs / BP / meds / symptoms — duplicates skipped, diet / steps / settings preserved. Both accept either raw JSON or a full sync URL.</p>
       </details>
     </div>
 
@@ -836,7 +837,7 @@
         <button id="btn-cloud-disconnect" class="danger" hidden>Disconnect</button>
       </div>
       <div id="cloud-sync-status" class="hint" style="margin-top:8px"></div>
-      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260518-0800 — Non-destructive smart-merge cloud sync + 60s auto-poll while app open</span></p>
+      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260518-0810 — Merge-from-pasted-text button + non-destructive smart-merge + 60s auto-poll</span></p>
     </div>
 
     <div class="card">
@@ -878,6 +879,6 @@
 </div>
 
 <script src="foods.js"></script>
-<script src="app.js?v=20260518-0800"></script>
+<script src="app.js?v=20260518-0810"></script>
 </body>
 </html>
