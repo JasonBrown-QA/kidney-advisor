@@ -4526,8 +4526,19 @@ async function init() {
   // PWA from another app, or unlocking the phone). Throttled so we don't
   // spam GitHub if the user is rapidly switching tabs.
   let lastVisibilityPull = 0;
+  let lastVisibleAt = Date.now();
+  const STALE_RELOAD_MS = 5 * 60 * 1000;
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible') return;
+    if (document.visibilityState !== 'visible') {
+      lastVisibleAt = Date.now();
+      return;
+    }
+    // Hard reload if the tab was hidden long enough that in-memory state is
+    // likely stale (cloud sync paused, midnight rolled over, app code shipped).
+    if (Date.now() - lastVisibleAt > STALE_RELOAD_MS) {
+      window.location.reload();
+      return;
+    }
     // iOS Shortcut may "Open URLs" with automation params into the already-running
     // PWA window without a full reload — re-scan query + hash on every refocus.
     checkAutomationURLParams();

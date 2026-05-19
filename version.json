@@ -1,4 +1,4 @@
 {
-  "build": "20260518-0810",
-  "summary": "Merge-from-pasted-text button — restore medical history without a file picker"
+  "build": "20260519-0900",
+  "summary": "Hard reload on refocus after 5+ min away"
 }
