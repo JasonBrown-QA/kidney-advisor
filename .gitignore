@@ -8,6 +8,9 @@ kidney-advisor-sync.json
 import-json.txt
 import-link.txt
 kidney-import.html
+# Raw Smart BP export from the iOS app — PHI
+SmartBP.csv
+Smart*BP*.csv
 
 # OS / editor
 .DS_Store
