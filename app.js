@@ -4500,6 +4500,7 @@ async function init() {
   // Run once shortly after load in case a reminder time has just passed
   setTimeout(checkReminders, 5000);
 
+  checkInstallHash().catch(err => console.error('Install hash error', err));
   checkHashImport().catch(err => console.error('Hash import error', err));
   checkAutomationURLParams();
   wireStepsCard();
@@ -4714,6 +4715,56 @@ async function checkHashImport() {
       alert('Import failed: ' + e.message);
     }
   }, 200);
+}
+
+// Base64url codec for the install-link payload. Plain base64 contains '+' and
+// '/' which URL fragments survive but copy-paste in chat apps mangles.
+function b64urlEncode(str) {
+  return btoa(unescape(encodeURIComponent(str)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+function b64urlDecode(str) {
+  let s = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  return decodeURIComponent(escape(atob(s)));
+}
+
+// iPhone setup link — bundles the GitHub PAT and gist ID in the URL fragment
+// so a fresh PWA install can auto-configure cloud sync on first launch.
+// Fragments never reach the server, but they're still visible in browser
+// history, iCloud Tabs, and screenshots — the Settings UI warns about this.
+async function checkInstallHash() {
+  const hash = location.hash || '';
+  if (!hash.startsWith('#install=')) return;
+  const payload = hash.slice('#install='.length);
+  history.replaceState(null, '', location.pathname + location.search);
+  let parsed;
+  try {
+    parsed = JSON.parse(b64urlDecode(decodeURIComponent(payload)));
+  } catch (e) {
+    console.error('install link decode failed', e);
+    alert('iPhone setup link was malformed and could not be applied.');
+    return;
+  }
+  const { pat, gistId } = parsed || {};
+  if (!pat) { alert('iPhone setup link is missing the GitHub token.'); return; }
+  const sameAsCurrent = pat === cloudGetPat() && (!gistId || gistId === cloudGetGistId());
+  if (sameAsCurrent) {
+    setCloudStatus('Setup link already applied · cloud sync was already configured');
+    renderCloudSyncUI();
+    return;
+  }
+  localStorage.setItem(GIST_PAT_KEY, pat);
+  if (gistId) localStorage.setItem(GIST_ID_KEY, gistId);
+  setCloudStatus('Setup link applied · connecting…');
+  renderCloudSyncUI();
+  try {
+    await cloudSyncNow();
+    renderCloudSyncUI();
+    flash('Cloud sync configured from setup link');
+  } catch (e) {
+    setCloudStatus('Setup link saved, but initial sync failed: ' + e.message);
+  }
 }
 
 // ─── Automation URL handler (iOS Shortcuts / Apple Watch) ────────────────
@@ -5312,6 +5363,10 @@ function renderCloudSyncUI() {
   document.getElementById('btn-cloud-force-pull').hidden = !hasPat;
   document.getElementById('btn-cloud-force-push').hidden = !hasPat;
   document.getElementById('btn-cloud-disconnect').hidden = !hasPat;
+  const installBlock = document.getElementById('install-link-block');
+  const installBtn = document.getElementById('btn-install-link');
+  if (installBlock) installBlock.hidden = !(hasPat && hasGist);
+  if (installBtn) installBtn.hidden = !(hasPat && hasGist);
   if (hasPat && patInput && !patInput.value) {
     patInput.placeholder = '••••••••••••••••••••  (saved — paste again to replace)';
   }
@@ -5413,6 +5468,38 @@ window.makeImportLink = async function () {
   const b64 = await gzipString(json);
   return publicBaseUrl() + '#data=' + encodeURIComponent('gz1:' + b64);
 };
+
+function makeInstallLink() {
+  const pat = cloudGetPat();
+  const gistId = cloudGetGistId();
+  if (!pat) throw new Error('No GitHub token saved on this device — set up cloud sync first.');
+  const payload = b64urlEncode(JSON.stringify({ pat, gistId }));
+  return publicBaseUrl() + '#install=' + payload;
+}
+
+document.getElementById('btn-install-link')?.addEventListener('click', () => {
+  const textarea = document.getElementById('install-link-text');
+  const copyBtn = document.getElementById('btn-install-link-copy');
+  const warn = document.getElementById('install-link-warn');
+  try {
+    const url = makeInstallLink();
+    textarea.value = url;
+    textarea.hidden = false;
+    copyBtn.hidden = false;
+    warn.hidden = false;
+    textarea.focus();
+    textarea.select();
+  } catch (e) {
+    alert('Could not build setup link: ' + e.message);
+  }
+});
+
+document.getElementById('btn-install-link-copy')?.addEventListener('click', async () => {
+  const textarea = document.getElementById('install-link-text');
+  if (!textarea.value) return;
+  const ok = await copyToClipboard(textarea.value, textarea);
+  flash(ok ? 'Setup link copied — AirDrop or email it to your iPhone' : 'Could not copy — long-press the link box to select manually');
+});
 
 document.getElementById('btn-sync-link').addEventListener('click', async () => {
   const textarea = document.getElementById('sync-link-text');

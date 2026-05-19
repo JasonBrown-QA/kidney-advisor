@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Kidney Advisor</title>
-<link rel="stylesheet" href="styles.css?v=20260519-0900" />
+<link rel="stylesheet" href="styles.css?v=20260519-1000" />
 
 <!-- PWA / iOS home-screen app -->
 <link rel="manifest" href="manifest.json" />
@@ -837,7 +837,15 @@
         <button id="btn-cloud-disconnect" class="danger" hidden>Disconnect</button>
       </div>
       <div id="cloud-sync-status" class="hint" style="margin-top:8px"></div>
-      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260519-0900 — Hard reload on refocus after 5+ min away</span></p>
+      <div id="install-link-block" hidden style="margin-top:14px;padding-top:12px;border-top:1px solid #e0e6ea">
+        <p class="hint" style="margin:0 0 6px;font-weight:600">📱 iPhone setup helper</p>
+        <p class="hint" style="margin:0 0 8px">Generates a one-time link that auto-configures cloud sync on another device — open it in Safari on the iPhone, then Add to Home Screen. The PWA will pull your data from the gist on first launch.</p>
+        <button id="btn-install-link" class="secondary" hidden>Generate iPhone setup link</button>
+        <textarea id="install-link-text" rows="3" readonly hidden style="width:100%;font-family:monospace;font-size:11px;margin-top:8px;word-break:break-all"></textarea>
+        <button id="btn-install-link-copy" class="secondary" hidden style="margin-top:6px">Copy link</button>
+        <p class="hint" id="install-link-warn" hidden style="margin-top:8px;color:#a05a00">Anyone who has this link can read and write your medical-data gist. AirDrop it to yourself or email it to your own address — do not paste into iMessage threads, group chats, or screenshots.</p>
+      </div>
+      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260519-1000 — iPhone setup link auto-configures cloud sync on a fresh device</span></p>
     </div>
 
     <div class="card">
@@ -879,6 +887,6 @@
 </div>
 
 <script src="foods.js"></script>
-<script src="app.js?v=20260519-0900"></script>
+<script src="app.js?v=20260519-1000"></script>
 </body>
 </html>
