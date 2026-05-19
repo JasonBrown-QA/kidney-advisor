@@ -1,9 +1,13 @@
 # Medical / PHI — never commit
 jason_medical_import.json
-jason_brown_AmbulatorySummary1_alltime.docx
+*AmbulatorySummary*.docx
 kidney-advisor-sync.json
 *-sync.json
 *.local.json
+# PHI-bearing import/share artifacts generated locally (raw JSON, gz1: URL, prefilled HTML)
+import-json.txt
+import-link.txt
+kidney-import.html
 
 # OS / editor
 .DS_Store
