@@ -2,7 +2,6 @@
   "name": "Kidney Advisor",
   "short_name": "Kidney",
   "description": "Personal kidney health tracker — labs, BP, meds, diet, symptoms.",
-  "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait-primary",

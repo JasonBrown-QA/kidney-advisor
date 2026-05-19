@@ -3257,7 +3257,36 @@ function wireStepsCard() {
 // an alert already shown to the user). Shared by Replace and Merge buttons.
 async function parsePastedImportContent() {
   const raw = document.getElementById('paste-import-text').value.trim();
-  if (!raw) { alert('Paste JSON or a sync URL into the box first.'); return null; }
+  if (!raw) { alert('Paste JSON, a sync URL, or an iPhone setup link into the box first.'); return null; }
+  // Setup link — auto-apply credentials and trigger cloud pull, then bail.
+  const installMatch = raw.match(/#install=([^\s]+)/);
+  if (installMatch) {
+    try {
+      const parsed = JSON.parse(b64urlDecode(decodeURIComponent(installMatch[1])));
+      const { pat, gistId } = parsed || {};
+      if (!pat) { alert('Setup link is missing the GitHub token.'); return null; }
+      const sameAsCurrent = pat === cloudGetPat() && (!gistId || gistId === cloudGetGistId());
+      if (sameAsCurrent) {
+        flash('Setup link matches the current configuration — nothing to apply');
+      } else {
+        localStorage.setItem(GIST_PAT_KEY, pat);
+        if (gistId) localStorage.setItem(GIST_ID_KEY, gistId);
+        renderCloudSyncUI();
+        setCloudStatus('Setup link applied · pulling…');
+        try {
+          await cloudSyncNow();
+          renderCloudSyncUI();
+          flash('Cloud sync configured · pulling your data from the gist');
+        } catch (e) {
+          setCloudStatus('Setup link saved but initial sync failed: ' + e.message);
+        }
+      }
+      document.getElementById('paste-import-text').value = '';
+    } catch (e) {
+      alert('Could not decode the setup link: ' + e.message);
+    }
+    return null;
+  }
   const hashMatch = raw.match(/#data=([^\s]+)/);
   if (hashMatch) {
     try {

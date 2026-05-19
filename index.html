@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Kidney Advisor</title>
-<link rel="stylesheet" href="styles.css?v=20260519-1000" />
+<link rel="stylesheet" href="styles.css?v=20260519-1100" />
 
 <!-- PWA / iOS home-screen app -->
 <link rel="manifest" href="manifest.json" />
@@ -802,12 +802,12 @@
       <details style="margin-top:14px">
         <summary style="cursor:pointer;font-weight:600">Paste JSON instead (no file needed — works on iPhone)</summary>
         <p class="hint" style="margin-top:8px">Copy the contents of a Kidney Advisor export (or a medical-history JSON file), paste it here, then tap the action you want.</p>
-        <textarea id="paste-import-text" rows="6" placeholder='{"labs":[...],"bp":[...],...} — or paste a full sync URL containing #data=...' autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style="width:100%;font-family:monospace;font-size:12px"></textarea>
+        <textarea id="paste-import-text" rows="6" placeholder='{"labs":[...],"bp":[...],...} — or paste a sync URL (#data=...) or an iPhone setup link (#install=...)' autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style="width:100%;font-family:monospace;font-size:12px"></textarea>
         <div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap">
           <button id="btn-paste-import" class="secondary">Replace from pasted text</button>
           <button id="btn-paste-merge" class="secondary">Merge from pasted text</button>
         </div>
-        <p class="hint" style="margin-top:8px"><strong>Replace</strong> wipes all current data and uses what's pasted. <strong>Merge</strong> only adds labs / BP / meds / symptoms — duplicates skipped, diet / steps / settings preserved. Both accept either raw JSON or a full sync URL.</p>
+        <p class="hint" style="margin-top:8px"><strong>Replace</strong> wipes all current data and uses what's pasted. <strong>Merge</strong> only adds labs / BP / meds / symptoms — duplicates skipped, diet / steps / settings preserved. <strong>iPhone setup links</strong> (starting with <code>#install=</code>) auto-configure cloud sync regardless of which button you tap — the pasted credentials are applied and the gist pulls automatically.</p>
       </details>
     </div>
 
@@ -845,7 +845,7 @@
         <button id="btn-install-link-copy" class="secondary" hidden style="margin-top:6px">Copy link</button>
         <p class="hint" id="install-link-warn" hidden style="margin-top:8px;color:#a05a00">Anyone who has this link can read and write your medical-data gist. AirDrop it to yourself or email it to your own address — do not paste into iMessage threads, group chats, or screenshots.</p>
       </div>
-      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260519-1000 — iPhone setup link auto-configures cloud sync on a fresh device</span></p>
+      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260519-1100 — Manifest start_url removed + paste-handler accepts setup links</span></p>
     </div>
 
     <div class="card">
@@ -887,6 +887,6 @@
 </div>
 
 <script src="foods.js"></script>
-<script src="app.js?v=20260519-1000"></script>
+<script src="app.js?v=20260519-1100"></script>
 </body>
 </html>
