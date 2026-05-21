@@ -765,6 +765,7 @@ tbody tr:last-child td { border-bottom: 0; }
   letter-spacing: .06em;
 }
 .tag-usda { background: #dde9f5; color: #1a4870; }
+.tag-nix  { background: #fce9d9; color: #7a3c0a; }
 .tag-off  { background: #e0f0e2; color: #1e6b2a; }
 .tag-brand { background: #eef0fa; color: #3a3a8a; }
 .results-source-label { color: var(--text-muted); font-weight: 600; font-size: 12px; }

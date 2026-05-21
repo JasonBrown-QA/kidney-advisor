@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Kidney Advisor</title>
-<link rel="stylesheet" href="styles.css?v=20260521-1200" />
+<link rel="stylesheet" href="styles.css?v=20260521-1300" />
 
 <!-- PWA / iOS home-screen app -->
 <link rel="manifest" href="manifest.json" />
@@ -473,7 +473,7 @@
           <button type="button" class="search-clear" id="usda-search-clear" aria-label="Clear search" title="Clear search" hidden>×</button>
         </div>
       </div>
-      <p class="hint">Searches USDA (600,000+ foods, including branded/restaurant items) plus Open Food Facts (3M+ community-contributed products) as a secondary source. Type a restaurant name to also see kidney-friendly menu picks. Click a result to add it to today's diet with full macros.</p>
+      <p class="hint">Searches USDA (600,000+ foods, including branded/restaurant items), Nutritionix (large branded/restaurant catalog — add a free key in Settings), and Open Food Facts (3M+ community-contributed products). Type a restaurant name to also see kidney-friendly menu picks. Click a result to add it to today's diet with full macros.</p>
       <div id="usda-restaurant-suggestions" class="restaurant-suggest-panel" hidden></div>
       <div class="results-section" id="usda-section" hidden>
         <div class="results-section-header">
@@ -482,6 +482,14 @@
           <span class="results-section-count" id="usda-count"></span>
         </div>
         <div id="usda-results" class="food-results"></div>
+      </div>
+      <div class="results-section" id="nutritionix-section" hidden>
+        <div class="results-section-header">
+          <span class="results-source-tag tag-nix">NIX</span>
+          <span class="results-source-label">Nutritionix</span>
+          <span class="results-section-count" id="nutritionix-count"></span>
+        </div>
+        <div id="nutritionix-results" class="food-results"></div>
       </div>
       <div class="results-section" id="off-section" hidden>
         <div class="results-section-header">
@@ -789,6 +797,22 @@
     </div>
 
     <div class="card">
+      <h3>Nutritionix (optional)</h3>
+      <p>Adds a third food search source on the Diet tab. Nutritionix has strong branded-product and restaurant coverage (often complements USDA for smaller brands and chain items). Free tier: 200 lookups/day with email signup, no card. Cronometer's data is proprietary and not publicly searchable — Nutritionix is the closest substitute.</p>
+      <form id="nutritionix-key-form" class="form-grid">
+        <label class="full">Nutritionix App ID
+          <input type="text" name="nutritionixAppId" placeholder="App ID (alphanumeric, ~8 chars)" autocomplete="off" />
+        </label>
+        <label class="full">Nutritionix App Key
+          <input type="password" name="nutritionixAppKey" placeholder="App Key (alphanumeric, ~32 chars)" autocomplete="off" />
+        </label>
+        <button type="submit" class="primary full">Save Nutritionix Credentials</button>
+      </form>
+      <p class="hint">Sign up free at <a href="https://developer.nutritionix.com/admin/access_details" target="_blank">developer.nutritionix.com</a> — create an account, then copy your App ID + App Key from the access-details page.</p>
+      <p class="hint" id="nutritionix-status"></p>
+    </div>
+
+    <div class="card">
       <h3>OneDrive Sync</h3>
       <p>Pick a JSON file in your OneDrive folder. The app will auto-write to it on every change, and your data will sync across devices via OneDrive.</p>
       <div class="row">
@@ -858,7 +882,7 @@
         <button id="btn-install-link-copy" class="secondary" hidden style="margin-top:6px">Copy link</button>
         <p class="hint" id="install-link-warn" hidden style="margin-top:8px;color:#a05a00">Anyone who has this link can read and write your medical-data gist. AirDrop it to yourself or email it to your own address — do not paste into iMessage threads, group chats, or screenshots.</p>
       </div>
-      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260521-1200 — My Foods: autofill + quick re-add from previously logged items</span></p>
+      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260521-1300 — Nutritionix added as third food search source</span></p>
     </div>
 
     <div class="card">
@@ -900,6 +924,6 @@
 </div>
 
 <script src="foods.js"></script>
-<script src="app.js?v=20260521-1200"></script>
+<script src="app.js?v=20260521-1300"></script>
 </body>
 </html>
