@@ -2019,282 +2019,6 @@ function renderOffResults(products) {
   });
 }
 
-// ─── Nutritionix search (third source) ────────────────────────────────────
-// Branded + restaurant catalog. Free tier: 200 lookups/day with email signup.
-// Instant search returns name + brand + calories only — full nutrients
-// (Na/K/P) are fetched on Add via /v2/search/item (branded) or
-// /v2/natural/nutrients (common). Two API calls per add: search + hydrate.
-
-const NUTRITIONIX_KEY_STORAGE = 'kidney-advisor-nutritionix';
-const NUTRITIONIX_BASE = 'https://trackapi.nutritionix.com/v2';
-// Nutritionix uses USDA attr_ids inside full_nutrients[]:
-//   208=cal 203=protein 204=fat 205=carbs 269=sugar 291=fiber
-//   307=sodium 306=potassium 305=phosphorus
-const NIX_ATTR = { calories: 208, protein: 203, fat: 204, carbs: 205, fiber: 291, sodium: 307, potassium: 306, phosphorus: 305 };
-
-function loadNutritionixCreds() {
-  try {
-    const s = JSON.parse(localStorage.getItem(NUTRITIONIX_KEY_STORAGE) || '{}');
-    return { appId: s.appId || '', appKey: s.appKey || '' };
-  } catch { return { appId: '', appKey: '' }; }
-}
-function saveNutritionixCreds(appId, appKey) {
-  localStorage.setItem(NUTRITIONIX_KEY_STORAGE, JSON.stringify({ appId: appId || '', appKey: appKey || '' }));
-}
-function hasNutritionixCreds() {
-  const c = loadNutritionixCreds();
-  return !!(c.appId && c.appKey);
-}
-function nutritionixHeaders() {
-  const c = loadNutritionixCreds();
-  return { 'x-app-id': c.appId, 'x-app-key': c.appKey, 'Content-Type': 'application/json' };
-}
-
-let nutritionixSearchTimer = null;
-let nutritionixLastResults = [];
-
-function extractNutritionixNutrients(food) {
-  // Branded item-detail and natural/nutrients both return per-serving values
-  // in top-level nf_* fields, plus a full_nutrients[] array keyed by USDA
-  // attr_id. Prefer top-level when present (less ambiguous), fall back to
-  // full_nutrients for phosphorus (no top-level field exists for it).
-  const fullMap = {};
-  for (const fn of (food.full_nutrients || [])) {
-    if (fn && fn.attr_id != null && typeof fn.value === 'number') fullMap[fn.attr_id] = fn.value;
-  }
-  const pick = (topKey, attrId) => {
-    if (typeof food[topKey] === 'number') return food[topKey];
-    if (fullMap[attrId] != null) return fullMap[attrId];
-    return null;
-  };
-  const servingText = food.serving_qty && food.serving_unit
-    ? `${food.serving_qty} ${food.serving_unit}${food.serving_weight_grams ? ` (${food.serving_weight_grams}g)` : ''}`
-    : (food.serving_weight_grams ? `${food.serving_weight_grams}g` : 'per serving');
-  return {
-    perServing: true,
-    servingText,
-    calories: pick('nf_calories', NIX_ATTR.calories),
-    protein: pick('nf_protein', NIX_ATTR.protein),
-    carbs: pick('nf_total_carbohydrate', NIX_ATTR.carbs),
-    fat: pick('nf_total_fat', NIX_ATTR.fat),
-    fiber: pick('nf_dietary_fiber', NIX_ATTR.fiber),
-    sodium: pick('nf_sodium', NIX_ATTR.sodium),
-    potassium: pick('nf_potassium', NIX_ATTR.potassium),
-    phosphorus: fullMap[NIX_ATTR.phosphorus] != null ? fullMap[NIX_ATTR.phosphorus] : null,
-  };
-}
-
-async function hydrateNutritionixItem(item) {
-  // item is a row from nutritionixLastResults. Branded rows have nix_item_id;
-  // common rows only have food_name (and tag_id). Fetch full nutrients.
-  if (item._hydrated) return item._hydrated;
-  if (item.nix_item_id) {
-    const url = `${NUTRITIONIX_BASE}/search/item?nix_item_id=${encodeURIComponent(item.nix_item_id)}`;
-    const res = await fetch(url, { headers: nutritionixHeaders() });
-    if (!res.ok) throw new Error(`Nutritionix item lookup ${res.status} ${res.statusText}`);
-    const data = await res.json();
-    const food = (data.foods && data.foods[0]) || null;
-    if (!food) throw new Error('Nutritionix returned no food data for that item.');
-    item._hydrated = food;
-    return food;
-  }
-  // Common food → natural nutrients endpoint
-  const q = `${item.serving_qty || 1} ${item.serving_unit || ''} ${item.food_name || ''}`.trim();
-  const res = await fetch(`${NUTRITIONIX_BASE}/natural/nutrients`, {
-    method: 'POST',
-    headers: nutritionixHeaders(),
-    body: JSON.stringify({ query: q }),
-  });
-  if (!res.ok) throw new Error(`Nutritionix natural lookup ${res.status} ${res.statusText}`);
-  const data = await res.json();
-  const food = (data.foods && data.foods[0]) || null;
-  if (!food) throw new Error('Nutritionix natural endpoint returned no foods.');
-  item._hydrated = food;
-  return food;
-}
-
-async function searchNutritionix(query) {
-  const wrap = document.getElementById('nutritionix-results');
-  const section = document.getElementById('nutritionix-section');
-  const countEl = document.getElementById('nutritionix-count');
-  if (!wrap) return;
-  if (!query || query.trim().length < 2) {
-    wrap.innerHTML = '';
-    nutritionixLastResults = [];
-    if (section) { section.hidden = true; delete section.dataset.loading; }
-    return;
-  }
-  if (!hasNutritionixCreds()) {
-    // Silent — user hasn't set up Nutritionix. Section stays hidden so the
-    // search UI doesn't get cluttered with a "no key" message every keystroke.
-    if (section) { section.hidden = true; delete section.dataset.loading; }
-    nutritionixLastResults = [];
-    return;
-  }
-  if (section) { section.hidden = false; section.dataset.loading = '1'; }
-  wrap.innerHTML = '<div class="results-loading"><span class="advisor-spinner"></span>Searching Nutritionix…</div>';
-  if (countEl) countEl.textContent = '';
-
-  const url = `${NUTRITIONIX_BASE}/search/instant?query=${encodeURIComponent(query.trim())}`;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
-  try {
-    const res = await fetch(url, { headers: nutritionixHeaders(), signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (!res.ok) {
-      let body = '';
-      try { body = await res.text(); } catch {}
-      if (res.status === 401) throw new Error('Nutritionix rejected the credentials (401). Re-check App ID + App Key in Settings.');
-      if (res.status === 403) throw new Error('Nutritionix returned 403 — App ID/Key mismatch or daily quota exceeded.');
-      if (res.status === 429) throw new Error('Nutritionix rate limit hit (429). Free tier is 200 lookups/day — wait or upgrade.');
-      throw new Error(`Nutritionix ${res.status}: ${body.slice(0, 160) || res.statusText}`);
-    }
-    const data = await res.json();
-    const branded = Array.isArray(data.branded) ? data.branded : [];
-    const common = Array.isArray(data.common) ? data.common : [];
-    // Tag rows by type so the renderer + hydrator know how to handle them.
-    nutritionixLastResults = [
-      ...branded.map(b => ({ ...b, _nixType: 'branded' })),
-      ...common.map(c => ({ ...c, _nixType: 'common' })),
-    ];
-    renderNutritionixResults(nutritionixLastResults);
-  } catch (err) {
-    clearTimeout(timeoutId);
-    if (section) delete section.dataset.loading;
-    let display = err.message || String(err);
-    if (err.name === 'AbortError') display = 'Nutritionix timed out after 15 seconds.';
-    else if (display === 'Failed to fetch' || display.startsWith('NetworkError')) {
-      display = 'Could not reach Nutritionix (network/CORS). Try again or check connection.';
-    }
-    wrap.innerHTML = `<div class="results-empty" style="color:var(--bad)">Nutritionix: ${escapeHtml(display)}</div>`;
-  }
-}
-
-function renderNutritionixResults(items) {
-  const wrap = document.getElementById('nutritionix-results');
-  const section = document.getElementById('nutritionix-section');
-  const countEl = document.getElementById('nutritionix-count');
-  if (section) delete section.dataset.loading;
-  if (!items.length) {
-    if (countEl) countEl.textContent = '';
-    wrap.innerHTML = '<div class="results-empty">No Nutritionix matches.</div>';
-    if (section) section.hidden = false;
-    return;
-  }
-  if (countEl) countEl.textContent = `${items.length} result${items.length === 1 ? '' : 's'}`;
-  const servingOptions = [0.25, 0.5, 0.75, 1, 1.5, 2, 3];
-  wrap.innerHTML = items.map((f, i) => {
-    const isBranded = f._nixType === 'branded';
-    const name = f.food_name || 'Unknown';
-    const brand = f.brand_name || '';
-    const serving = (f.serving_qty != null && f.serving_unit)
-      ? `${f.serving_qty} ${f.serving_unit}${f.serving_weight_grams ? ` (${f.serving_weight_grams}g)` : ''}`
-      : (f.serving_weight_grams ? `${f.serving_weight_grams}g` : '1 serving');
-    const calPer = (isBranded && typeof f.nf_calories === 'number') ? Math.round(f.nf_calories) : null;
-    const calStr = calPer != null ? `${calPer} kcal` : (isBranded ? '— kcal' : 'cal on add');
-    const tagSrc = isBranded ? 'Branded' : 'Common';
-    const photoUrl = f.photo && (f.photo.thumb || f.photo.highres);
-
-    const options = servingOptions.map(opt => {
-      const label = opt === 0.25 ? '1/4' : opt === 0.5 ? '1/2' : opt === 0.75 ? '3/4' : String(opt);
-      const kcal = calPer != null ? ` — ${Math.round(calPer * opt)} kcal` : '';
-      const selected = opt === 1 ? ' selected' : '';
-      return `<option value="${opt}"${selected}>${label} serving${opt === 1 ? '' : 's'}${kcal}</option>`;
-    }).join('');
-
-    return `<div class="food-card nix-card" data-nix-idx="${i}">
-      ${photoUrl ? `<img class="off-thumb" src="${escapeHtml(photoUrl)}" alt="" loading="lazy" />` : ''}
-      <div class="name">${escapeHtml(name)}${brand ? ` <span class="food-tag" style="background:#fce9d9;color:#7a3c0a">${escapeHtml(brand)}</span>` : ''} <span class="food-tag" style="background:#eef;color:#338">${tagSrc}</span></div>
-      <div class="serving">Per ${escapeHtml(serving)} · ${calStr}</div>
-      <div class="row" style="gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
-        <label style="margin:0;font-size:13px">Servings
-          <select class="nix-serving-select" data-nix-idx="${i}" style="margin-left:6px">
-            ${options}
-            <option value="custom">Custom…</option>
-          </select>
-        </label>
-        <input type="number" class="nix-serving-custom" data-nix-idx="${i}" step="0.05" min="0.05" placeholder="e.g. 1.25" style="width:90px;display:none" />
-        <span class="nix-serving-preview hint" data-nix-idx="${i}" style="margin:0">${calPer != null ? Math.round(calPer) + ' kcal' : ''}</span>
-        <button type="button" class="primary nix-add-btn" data-nix-idx="${i}" style="margin-left:auto">Add</button>
-      </div>
-    </div>`;
-  }).join('');
-
-  function readServings(idx) {
-    const sel = wrap.querySelector(`.nix-serving-select[data-nix-idx="${idx}"]`);
-    const custom = wrap.querySelector(`.nix-serving-custom[data-nix-idx="${idx}"]`);
-    if (!sel) return 1;
-    if (sel.value === 'custom') {
-      const v = parseFloat(custom && custom.value);
-      return v > 0 ? v : null;
-    }
-    return parseFloat(sel.value) || 1;
-  }
-  function updatePreview(idx) {
-    const item = nutritionixLastResults[Number(idx)];
-    const preview = wrap.querySelector(`.nix-serving-preview[data-nix-idx="${idx}"]`);
-    if (!item || !preview) return;
-    const s = readServings(idx);
-    if (s == null) { preview.textContent = 'Enter a custom amount'; return; }
-    const cal = (item._nixType === 'branded' && typeof item.nf_calories === 'number')
-      ? Math.round(item.nf_calories * s) : null;
-    preview.textContent = cal != null ? `${cal} kcal` : 'Full nutrients fetched on Add';
-  }
-
-  wrap.querySelectorAll('.nix-serving-select').forEach(sel => {
-    sel.addEventListener('change', e => {
-      const idx = sel.dataset.nixIdx;
-      const custom = wrap.querySelector(`.nix-serving-custom[data-nix-idx="${idx}"]`);
-      if (sel.value === 'custom') {
-        if (custom) { custom.style.display = ''; custom.focus(); }
-      } else {
-        if (custom) custom.style.display = 'none';
-      }
-      updatePreview(idx);
-      e.stopPropagation();
-    });
-  });
-  wrap.querySelectorAll('.nix-serving-custom').forEach(input => {
-    input.addEventListener('input', e => { updatePreview(input.dataset.nixIdx); e.stopPropagation(); });
-    input.addEventListener('click', e => e.stopPropagation());
-  });
-  wrap.querySelectorAll('.nix-add-btn').forEach(btn => {
-    btn.addEventListener('click', async e => {
-      e.stopPropagation();
-      const idx = btn.dataset.nixIdx;
-      const item = nutritionixLastResults[Number(idx)];
-      if (!item) return;
-      const servings = readServings(idx);
-      if (!servings || isNaN(servings) || servings <= 0) {
-        alert('Enter a serving amount greater than 0.');
-        return;
-      }
-      const originalLabel = btn.textContent;
-      btn.disabled = true;
-      btn.textContent = 'Fetching…';
-      try {
-        const food = await hydrateNutritionixItem(item);
-        const n = extractNutritionixNutrients(food);
-        const name = food.food_name || item.food_name || 'Unknown';
-        const displayName = item.brand_name ? `${item.brand_name} ${name}` : name;
-        const entry = { id: uid(), date: todayISO(), item: displayName, servings };
-        for (const f of ['calories','carbs','fat','fiber','protein','sodium','potassium','phosphorus']) {
-          if (n[f] != null) entry[f] = n[f];
-        }
-        state.diet.push(entry);
-        state.diet.sort((a, b) => a.date.localeCompare(b.date));
-        save();
-        flash(`Added ${displayName} × ${servings}`);
-        renderAll();
-      } catch (err) {
-        alert(`Couldn't add from Nutritionix: ${err.message || err}`);
-        btn.disabled = false;
-        btn.textContent = originalLabel;
-      }
-    });
-  });
-}
-
 // ─── Search input wiring ─────────────────────────────────────────────────
 
 function updateSearchClearVisibility(inputId, clearId) {
@@ -2307,7 +2031,6 @@ function updateSearchClearVisibility(inputId, clearId) {
 document.getElementById('usda-search').addEventListener('input', e => {
   clearTimeout(usdaSearchTimer);
   clearTimeout(offSearchTimer);
-  clearTimeout(nutritionixSearchTimer);
   // Restaurant suggestions render immediately on the brand keyword — no need
   // to wait for the 400 ms USDA debounce. Cheap detection, cached AI output.
   renderRestaurantSuggestions(detectRestaurant(e.target.value));
@@ -2315,7 +2038,6 @@ document.getElementById('usda-search').addEventListener('input', e => {
   const q = e.target.value;
   usdaSearchTimer = setTimeout(() => searchUSDA(q), 400);
   offSearchTimer = setTimeout(() => searchOpenFoodFacts(q), 500);
-  nutritionixSearchTimer = setTimeout(() => searchNutritionix(q), 450);
 });
 
 document.getElementById('usda-search-clear')?.addEventListener('click', () => {
@@ -2325,11 +2047,9 @@ document.getElementById('usda-search-clear')?.addEventListener('click', () => {
   input.focus();
   clearTimeout(usdaSearchTimer);
   clearTimeout(offSearchTimer);
-  clearTimeout(nutritionixSearchTimer);
   renderRestaurantSuggestions(null);
   searchUSDA('');
   searchOpenFoodFacts('');
-  searchNutritionix('');
   updateSearchClearVisibility('usda-search', 'usda-search-clear');
 });
 
@@ -2821,34 +2541,6 @@ if (usdaKeyForm) {
   // Pre-fill from storage
   const existing = loadUSDAKey();
   if (existing) usdaKeyForm.elements.usdaKey.value = existing;
-}
-
-function renderNutritionixStatus() {
-  const el = document.getElementById('nutritionix-status');
-  if (!el) return;
-  const c = loadNutritionixCreds();
-  if (c.appId && c.appKey) {
-    el.innerHTML = `<span style="color:var(--good)">✓ Configured</span> — Nutritionix results will appear under USDA in the Diet tab search.`;
-  } else {
-    el.innerHTML = `<span style="color:var(--text-muted)">Not configured</span> — Nutritionix search is hidden until both App ID and App Key are saved.`;
-  }
-}
-
-const nutritionixKeyForm = document.getElementById('nutritionix-key-form');
-if (nutritionixKeyForm) {
-  nutritionixKeyForm.addEventListener('submit', e => {
-    e.preventDefault();
-    const fd = new FormData(e.target);
-    const appId = (fd.get('nutritionixAppId') || '').toString().trim();
-    const appKey = (fd.get('nutritionixAppKey') || '').toString().trim();
-    saveNutritionixCreds(appId, appKey);
-    renderNutritionixStatus();
-    flash(appId && appKey ? 'Nutritionix credentials saved' : 'Nutritionix credentials cleared');
-  });
-  const existing = loadNutritionixCreds();
-  if (existing.appId) nutritionixKeyForm.elements.nutritionixAppId.value = existing.appId;
-  if (existing.appKey) nutritionixKeyForm.elements.nutritionixAppKey.value = existing.appKey;
-  renderNutritionixStatus();
 }
 
 // ─── Barcode scanner + Open Food Facts lookup ─────────────────────────────
