@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Kidney Advisor</title>
-<link rel="stylesheet" href="styles.css?v=20260519-1100" />
+<link rel="stylesheet" href="styles.css?v=20260521-1200" />
 
 <!-- PWA / iOS home-screen app -->
 <link rel="manifest" href="manifest.json" />
@@ -436,6 +436,18 @@
       </div>
     </div>
 
+    <div class="card" id="my-foods-card" hidden>
+      <div class="card-row">
+        <h3 style="margin:0">My Foods</h3>
+        <div class="search-wrap">
+          <input type="search" id="my-foods-search" placeholder="Filter your foods…" autocomplete="off" />
+          <button type="button" class="search-clear" id="my-foods-search-clear" aria-label="Clear search" title="Clear search" hidden>×</button>
+        </div>
+      </div>
+      <p class="hint">Foods you've logged before. Tap to re-add — pre-fills calories, macros, Na/K/P from your most recent entry. Also autofills below when you type a saved name.</p>
+      <div id="my-foods-results" class="food-results"></div>
+    </div>
+
     <div class="card">
       <div class="card-row">
         <h3 style="margin:0">Scan Barcode</h3>
@@ -512,7 +524,8 @@
       <h3>Custom Entry</h3>
       <form id="diet-form" class="form-grid">
         <label>Date <input type="date" name="date" required /></label>
-        <label>Item <input type="text" name="item" required placeholder="e.g., banana" /></label>
+        <label>Item <input type="text" name="item" required placeholder="e.g., banana" list="my-foods-list" autocomplete="off" /></label>
+        <datalist id="my-foods-list"></datalist>
         <label>Meal
           <select name="meal">
             <option value="">—</option>
@@ -845,7 +858,7 @@
         <button id="btn-install-link-copy" class="secondary" hidden style="margin-top:6px">Copy link</button>
         <p class="hint" id="install-link-warn" hidden style="margin-top:8px;color:#a05a00">Anyone who has this link can read and write your medical-data gist. AirDrop it to yourself or email it to your own address — do not paste into iMessage threads, group chats, or screenshots.</p>
       </div>
-      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260519-1100 — Manifest start_url removed + paste-handler accepts setup links</span></p>
+      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260521-1200 — My Foods: autofill + quick re-add from previously logged items</span></p>
     </div>
 
     <div class="card">
@@ -887,6 +900,6 @@
 </div>
 
 <script src="foods.js"></script>
-<script src="app.js?v=20260519-1100"></script>
+<script src="app.js?v=20260521-1200"></script>
 </body>
 </html>

@@ -1384,6 +1384,142 @@ document.getElementById('food-search').addEventListener('input', e => {
   if (clear) clear.hidden = !e.target.value;
 });
 
+// ─── My Foods: autofill + quick re-add from previously logged entries ────
+// Derived live from state.diet (no separate registry). Keys by normalized
+// item name, snapshot is most-recent nutrient values, with use-count.
+
+const MY_FOODS_FIELDS = ['calories','carbs','fat','fiber','protein','sodium','potassium','phosphorus','fluids'];
+const normMyFood = s => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+function getMyFoods() {
+  const map = new Map();
+  for (const e of state.diet || []) {
+    const item = (e.item || '').trim();
+    if (!item) continue;
+    if (normMyFood(item) === 'water') continue; // already covered by Quick Water Log
+    const key = normMyFood(item);
+    const existing = map.get(key);
+    const date = e.date || '';
+    if (!existing || date >= (existing.lastDate || '')) {
+      const snapshot = {
+        item,
+        lastDate: date,
+        count: (existing ? existing.count : 0) + 1,
+      };
+      for (const f of MY_FOODS_FIELDS) {
+        if (e[f] != null && !isNaN(Number(e[f]))) snapshot[f] = Number(e[f]);
+      }
+      map.set(key, snapshot);
+    } else {
+      existing.count += 1;
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => {
+    const d = (b.lastDate || '').localeCompare(a.lastDate || '');
+    return d !== 0 ? d : b.count - a.count;
+  });
+}
+
+function renderMyFoodsCard(query) {
+  const card = document.getElementById('my-foods-card');
+  const wrap = document.getElementById('my-foods-results');
+  if (!card || !wrap) return;
+  const all = getMyFoods();
+  if (all.length === 0) { card.hidden = true; wrap.innerHTML = ''; return; }
+  card.hidden = false;
+  const q = (query || '').trim().toLowerCase();
+  const items = q
+    ? all.filter(f => f.item.toLowerCase().includes(q))
+    : all.slice(0, 24);
+  if (items.length === 0) {
+    wrap.innerHTML = '<div style="color:var(--text-muted);padding:10px">No matches.</div>';
+    return;
+  }
+  wrap.innerHTML = items.map((f, i) => {
+    const parts = [];
+    if (f.calories != null) parts.push(`${Math.round(f.calories)} kcal`);
+    if (f.sodium != null) parts.push(`Na ${Math.round(f.sodium)}mg`);
+    if (f.potassium != null) parts.push(`K ${Math.round(f.potassium)}mg`);
+    if (f.phosphorus != null) parts.push(`P ${Math.round(f.phosphorus)}mg`);
+    if (f.protein != null) parts.push(`Pro ${f.protein}g`);
+    if (f.fluids != null) parts.push(`${f.fluids}oz`);
+    const stats = parts.length ? parts.join(' · ') : '<em>no saved nutrients</em>';
+    const meta = [f.lastDate ? `Last ${escapeHtml(f.lastDate)}` : null, `${f.count}× logged`]
+      .filter(Boolean).join(' · ');
+    return `<div class="food-card" data-my-food-idx="${i}">
+      <div class="name">${escapeHtml(f.item)}</div>
+      <div class="serving">${meta}</div>
+      <div class="stats">${stats}</div>
+    </div>`;
+  }).join('');
+  wrap.querySelectorAll('[data-my-food-idx]').forEach(el => {
+    el.addEventListener('click', () => {
+      const f = items[Number(el.dataset.myFoodIdx)];
+      const servings = parseFloat(prompt(`Servings of ${f.item}?`, '1'));
+      if (!servings || isNaN(servings) || servings <= 0) return;
+      const entry = { id: uid(), date: todayISO(), item: f.item, servings };
+      for (const k of MY_FOODS_FIELDS) {
+        if (f[k] != null) entry[k] = f[k];
+      }
+      state.diet.push(entry);
+      state.diet.sort((a, b) => a.date.localeCompare(b.date));
+      save();
+      flash(`Added ${f.item} × ${servings}`);
+      renderAll();
+    });
+  });
+}
+
+function renderMyFoodsDatalist() {
+  const dl = document.getElementById('my-foods-list');
+  if (!dl) return;
+  const all = getMyFoods();
+  dl.innerHTML = all.slice(0, 250)
+    .map(f => `<option value="${escapeHtml(f.item).replace(/"/g, '&quot;')}"></option>`)
+    .join('');
+}
+
+function refreshMyFoods() {
+  const input = document.getElementById('my-foods-search');
+  renderMyFoodsCard(input ? input.value : '');
+  renderMyFoodsDatalist();
+}
+
+function autofillDietFormFromName(name) {
+  const norm = normMyFood(name);
+  if (!norm) return;
+  const match = getMyFoods().find(f => normMyFood(f.item) === norm);
+  if (!match) return;
+  const form = document.getElementById('diet-form');
+  if (!form) return;
+  for (const k of MY_FOODS_FIELDS) {
+    const input = form.elements[k];
+    if (input && !input.value && match[k] != null) {
+      input.value = match[k];
+    }
+  }
+}
+
+document.querySelector('#diet-form [name=item]')?.addEventListener('input', e => {
+  autofillDietFormFromName(e.target.value);
+});
+document.querySelector('#diet-form [name=item]')?.addEventListener('change', e => {
+  autofillDietFormFromName(e.target.value);
+});
+
+document.getElementById('my-foods-search')?.addEventListener('input', e => {
+  renderMyFoodsCard(e.target.value);
+  updateSearchClearVisibility('my-foods-search', 'my-foods-search-clear');
+});
+document.getElementById('my-foods-search-clear')?.addEventListener('click', () => {
+  const input = document.getElementById('my-foods-search');
+  if (!input) return;
+  input.value = '';
+  input.focus();
+  renderMyFoodsCard('');
+  updateSearchClearVisibility('my-foods-search', 'my-foods-search-clear');
+});
+
 // ─── USDA FoodData Central search ────────────────────────────────────────
 
 const USDA_KEY_STORAGE = 'kidney-advisor-usda';
@@ -4483,6 +4619,7 @@ function renderAll() {
   renderBp();
   renderMeds();
   renderDiet();
+  refreshMyFoods();
   renderSymptoms();
   renderVisit();
   renderAdvisor();
