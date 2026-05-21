@@ -2019,6 +2019,247 @@ function renderOffResults(products) {
   });
 }
 
+// ─── MenuStat 2019 restaurant chain database ─────────────────────────────
+// NYC DOHMH MenuStat 2019 export — 91 chains, ~25,000 menu items with
+// calories + macros + sodium. Potassium present on ~3% of rows, no
+// phosphorus. Lives in data/menustat/ as one JSON file per chain plus an
+// index.json (restaurant name → slug). Index loads once on first search;
+// per-chain files lazy-load when the query mentions that chain.
+
+let menuStatIndex = null;       // null = not yet loaded, [] = loaded
+const menuStatCache = {};       // slug → restaurant payload
+let menuStatLastResults = [];
+let menuStatSearchTimer = null;
+
+async function ensureMenuStatIndex() {
+  if (menuStatIndex !== null) return menuStatIndex;
+  try {
+    const res = await fetch('data/menustat/index.json', { cache: 'force-cache' });
+    if (!res.ok) throw new Error(`MenuStat index ${res.status}`);
+    const data = await res.json();
+    menuStatIndex = Array.isArray(data.restaurants) ? data.restaurants : [];
+  } catch (err) {
+    console.warn('MenuStat index load failed', err);
+    menuStatIndex = [];
+  }
+  return menuStatIndex;
+}
+
+function normalizeChainName(s) {
+  return (s || '').toLowerCase()
+    .replace(/[’']/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function detectMenuStatRestaurants(query, index) {
+  const q = normalizeChainName(query);
+  if (!q || q.length < 3) return [];
+  const matches = [];
+  for (const r of index) {
+    const norm = normalizeChainName(r.name);
+    if (!norm) continue;
+    // Match if the whole restaurant name appears as a contiguous substring
+    // in the query. Pad both sides so "subway" doesn't match a query that
+    // only contains "way".
+    const paddedQ = ' ' + q + ' ';
+    const paddedNorm = ' ' + norm + ' ';
+    if (paddedQ.includes(paddedNorm)) {
+      matches.push({ ...r, _matched: norm });
+    }
+  }
+  // Longest match first so "burger king" beats "burger" when both exist
+  matches.sort((a, b) => b._matched.length - a._matched.length);
+  return matches.slice(0, 3);
+}
+
+async function loadMenuStatRestaurant(slug) {
+  if (menuStatCache[slug]) return menuStatCache[slug];
+  const res = await fetch(`data/menustat/${encodeURIComponent(slug)}.json`, { cache: 'force-cache' });
+  if (!res.ok) throw new Error(`MenuStat ${slug} ${res.status}`);
+  const data = await res.json();
+  menuStatCache[slug] = data;
+  return data;
+}
+
+async function searchMenuStat(query) {
+  const wrap = document.getElementById('menustat-results');
+  const section = document.getElementById('menustat-section');
+  const countEl = document.getElementById('menustat-count');
+  if (!wrap) return;
+  if (!query || query.trim().length < 3) {
+    wrap.innerHTML = '';
+    menuStatLastResults = [];
+    if (section) { section.hidden = true; delete section.dataset.loading; }
+    return;
+  }
+  const index = await ensureMenuStatIndex();
+  if (!index.length) { if (section) section.hidden = true; return; }
+  const matched = detectMenuStatRestaurants(query, index);
+  if (matched.length === 0) {
+    menuStatLastResults = [];
+    if (section) { section.hidden = true; delete section.dataset.loading; }
+    return;
+  }
+  if (section) { section.hidden = false; section.dataset.loading = '1'; }
+  wrap.innerHTML = '<div class="results-loading"><span class="advisor-spinner"></span>Loading chain menus…</div>';
+  if (countEl) countEl.textContent = '';
+
+  // Strip matched chain names out of the query — the rest is the item filter
+  let residual = normalizeChainName(query);
+  for (const r of matched) residual = residual.replace(r._matched, ' ').trim();
+  residual = residual.replace(/\s+/g, ' ').trim();
+  const tokens = residual ? residual.split(' ') : [];
+
+  const allItems = [];
+  for (const r of matched) {
+    try {
+      const data = await loadMenuStatRestaurant(r.slug);
+      for (const item of (data.items || [])) {
+        const name = (item.n || '').toLowerCase();
+        const cat = (item.c || '').toLowerCase();
+        if (tokens.length === 0 || tokens.every(t => name.includes(t) || cat.includes(t))) {
+          allItems.push({ ...item, _restaurant: data.name, _slug: r.slug });
+        }
+      }
+    } catch (err) {
+      console.warn('MenuStat load failed for', r.slug, err);
+    }
+  }
+  // With no item filter, push beverages + toppings to the bottom so food
+  // shows first
+  if (tokens.length === 0) {
+    const priority = c => {
+      const cat = (c || '').toLowerCase();
+      if (cat.includes('beverage')) return 3;
+      if (cat.includes('topping') || cat.includes('ingredient')) return 2;
+      return 1;
+    };
+    allItems.sort((a, b) => priority(a.c) - priority(b.c));
+  }
+  menuStatLastResults = allItems.slice(0, 60);
+  renderMenuStatResults(menuStatLastResults, matched, tokens.length === 0);
+}
+
+function renderMenuStatResults(items, matched, broadQuery) {
+  const wrap = document.getElementById('menustat-results');
+  const section = document.getElementById('menustat-section');
+  const countEl = document.getElementById('menustat-count');
+  if (section) delete section.dataset.loading;
+  if (!items.length) {
+    if (countEl) countEl.textContent = '';
+    const names = matched.map(r => r.name).join(', ');
+    wrap.innerHTML = `<div class="results-empty">No matching items in ${escapeHtml(names)}. Try a simpler item name.</div>`;
+    if (section) section.hidden = false;
+    return;
+  }
+  if (countEl) {
+    const totalFromMatched = matched.reduce((sum, r) => sum + (r.items || 0), 0);
+    countEl.textContent = broadQuery
+      ? `${items.length} of ${totalFromMatched} (showing top — refine query for more)`
+      : `${items.length} item${items.length === 1 ? '' : 's'}`;
+  }
+  const servingOptions = [0.25, 0.5, 0.75, 1, 1.5, 2, 3];
+  wrap.innerHTML = items.map((f, i) => {
+    const serving = f.sg ? `${f.sg}g` : '1 serving';
+    const cal = f.cal != null ? `${Math.round(f.cal)} kcal` : '— kcal';
+    const macros = [
+      f.p != null ? `Pr ${f.p}g` : null,
+      f.cb != null ? `C ${f.cb}g` : null,
+      f.fat != null ? `F ${f.fat}g` : null,
+      f.fb != null ? `Fib ${f.fb}g` : null,
+    ].filter(Boolean).join(' · ');
+    const kidney = [
+      f.na != null ? `Na ${Math.round(f.na)}mg` : null,
+      f.k != null ? `K ${Math.round(f.k)}mg` : null,
+    ].filter(Boolean).join(' · ');
+    const options = servingOptions.map(opt => {
+      const label = opt === 0.25 ? '1/4' : opt === 0.5 ? '1/2' : opt === 0.75 ? '3/4' : String(opt);
+      const kcal = f.cal != null ? ` — ${Math.round(f.cal * opt)} kcal` : '';
+      const selected = opt === 1 ? ' selected' : '';
+      return `<option value="${opt}"${selected}>${label} serving${opt === 1 ? '' : 's'}${kcal}</option>`;
+    }).join('');
+    return `<div class="food-card ms-card" data-ms-idx="${i}">
+      <div class="name">${escapeHtml(f.n)} <span class="food-tag" style="background:#f0eaf5;color:#5b2470">${escapeHtml(f._restaurant)}</span>${f.c ? ` <span class="food-tag" style="background:#eef;color:#338">${escapeHtml(f.c)}</span>` : ''}</div>
+      <div class="serving">Per ${escapeHtml(serving)} · ${cal}${macros ? ' · ' + macros : ''}</div>
+      ${kidney ? `<div class="stats">${kidney}</div>` : ''}
+      <div class="row" style="gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+        <label style="margin:0;font-size:13px">Servings
+          <select class="ms-serving-select" data-ms-idx="${i}" style="margin-left:6px">${options}<option value="custom">Custom…</option></select>
+        </label>
+        <input type="number" class="ms-serving-custom" data-ms-idx="${i}" step="0.05" min="0.05" placeholder="e.g. 1.25" style="width:90px;display:none" />
+        <span class="ms-serving-preview hint" data-ms-idx="${i}" style="margin:0">${f.cal != null ? Math.round(f.cal) + ' kcal' : ''}</span>
+        <button type="button" class="primary ms-add-btn" data-ms-idx="${i}" style="margin-left:auto">Add</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  function readServings(idx) {
+    const sel = wrap.querySelector(`.ms-serving-select[data-ms-idx="${idx}"]`);
+    const custom = wrap.querySelector(`.ms-serving-custom[data-ms-idx="${idx}"]`);
+    if (!sel) return 1;
+    if (sel.value === 'custom') {
+      const v = parseFloat(custom && custom.value);
+      return v > 0 ? v : null;
+    }
+    return parseFloat(sel.value) || 1;
+  }
+  function updatePreview(idx) {
+    const it = menuStatLastResults[Number(idx)];
+    const preview = wrap.querySelector(`.ms-serving-preview[data-ms-idx="${idx}"]`);
+    if (!it || !preview) return;
+    const s = readServings(idx);
+    if (s == null) { preview.textContent = 'Enter a custom amount'; return; }
+    const parts = [];
+    if (it.cal != null) parts.push(`${Math.round(it.cal * s)} kcal`);
+    if (it.na != null) parts.push(`Na ${Math.round(it.na * s)}mg`);
+    if (it.k != null) parts.push(`K ${Math.round(it.k * s)}mg`);
+    preview.textContent = parts.join(' · ');
+  }
+  wrap.querySelectorAll('.ms-serving-select').forEach(sel => {
+    sel.addEventListener('change', e => {
+      const idx = sel.dataset.msIdx;
+      const custom = wrap.querySelector(`.ms-serving-custom[data-ms-idx="${idx}"]`);
+      if (sel.value === 'custom') {
+        if (custom) { custom.style.display = ''; custom.focus(); }
+      } else if (custom) {
+        custom.style.display = 'none';
+      }
+      updatePreview(idx);
+      e.stopPropagation();
+    });
+  });
+  wrap.querySelectorAll('.ms-serving-custom').forEach(input => {
+    input.addEventListener('input', e => { updatePreview(input.dataset.msIdx); e.stopPropagation(); });
+    input.addEventListener('click', e => e.stopPropagation());
+  });
+  wrap.querySelectorAll('.ms-add-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const idx = btn.dataset.msIdx;
+      const it = menuStatLastResults[Number(idx)];
+      if (!it) return;
+      const servings = readServings(idx);
+      if (!servings || isNaN(servings) || servings <= 0) {
+        alert('Enter a serving amount greater than 0.');
+        return;
+      }
+      const display = `${it._restaurant} ${it.n}`.trim();
+      const entry = { id: uid(), date: todayISO(), item: display, servings };
+      const fieldMap = { calories: 'cal', carbs: 'cb', fat: 'fat', fiber: 'fb', protein: 'p', sodium: 'na', potassium: 'k' };
+      for (const [k, sk] of Object.entries(fieldMap)) {
+        if (it[sk] != null) entry[k] = it[sk];
+      }
+      state.diet.push(entry);
+      state.diet.sort((a, b) => a.date.localeCompare(b.date));
+      save();
+      flash(`Added ${display} × ${servings}`);
+      renderAll();
+    });
+  });
+}
+
 // ─── Search input wiring ─────────────────────────────────────────────────
 
 function updateSearchClearVisibility(inputId, clearId) {
@@ -2031,6 +2272,7 @@ function updateSearchClearVisibility(inputId, clearId) {
 document.getElementById('usda-search').addEventListener('input', e => {
   clearTimeout(usdaSearchTimer);
   clearTimeout(offSearchTimer);
+  clearTimeout(menuStatSearchTimer);
   // Restaurant suggestions render immediately on the brand keyword — no need
   // to wait for the 400 ms USDA debounce. Cheap detection, cached AI output.
   renderRestaurantSuggestions(detectRestaurant(e.target.value));
@@ -2038,6 +2280,7 @@ document.getElementById('usda-search').addEventListener('input', e => {
   const q = e.target.value;
   usdaSearchTimer = setTimeout(() => searchUSDA(q), 400);
   offSearchTimer = setTimeout(() => searchOpenFoodFacts(q), 500);
+  menuStatSearchTimer = setTimeout(() => searchMenuStat(q), 300);
 });
 
 document.getElementById('usda-search-clear')?.addEventListener('click', () => {
@@ -2047,9 +2290,11 @@ document.getElementById('usda-search-clear')?.addEventListener('click', () => {
   input.focus();
   clearTimeout(usdaSearchTimer);
   clearTimeout(offSearchTimer);
+  clearTimeout(menuStatSearchTimer);
   renderRestaurantSuggestions(null);
   searchUSDA('');
   searchOpenFoodFacts('');
+  searchMenuStat('');
   updateSearchClearVisibility('usda-search', 'usda-search-clear');
 });
 
