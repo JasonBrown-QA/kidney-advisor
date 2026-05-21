@@ -3304,7 +3304,7 @@ async function parsePastedImportContent() {
   const text = raw
     .replace(/[“”„‟″‶]/g, '"')
     .replace(/[‘’‚‛′‵]/g, "'")
-    .replace(/ /g, ' ');
+    .replace(/ /g, ' ');
   try { return JSON.parse(text); }
   catch (err) { alert('That doesn\'t look like valid JSON or a sync URL: ' + err.message); return null; }
 }
@@ -3360,7 +3360,7 @@ document.getElementById('btn-paste-import').addEventListener('click', async () =
     const text = raw
       .replace(/[“”„‟″‶]/g, '"')
       .replace(/[‘’‚‛′‵]/g, "'")
-      .replace(/ /g, ' ');
+      .replace(/ /g, ' ');
     try {
       incoming = JSON.parse(text);
     } catch (err) {
