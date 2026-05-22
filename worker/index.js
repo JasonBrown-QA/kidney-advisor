@@ -2,9 +2,9 @@
 //
 // iOS Shortcuts can't write directly into the PWA (the PWA isn't a server).
 // They can hit a URL silently in the background via "Get Contents of URL".
-// This Worker is that URL: it accepts BP and/or step parameters, merges them
-// into the kidney-advisor.json gist that the PWA already auto-syncs from,
-// then the PWA picks the new data up on its next focus — no app-switch, no
+// This Worker is that URL: it accepts BP parameters, merges them into the
+// kidney-advisor.json gist that the PWA already auto-syncs from, and then
+// the PWA picks the new reading up on its next focus — no app-switch, no
 // tap on the iPhone.
 //
 // Required Worker secrets (set via Cloudflare dashboard → Settings → Variables):
@@ -14,11 +14,9 @@
 //
 // Endpoint: GET /sync
 //   ?token=<SYNC_TOKEN>             (required)
-//   &systolic=120&diastolic=80      (BP — both required if syncing BP)
-//   &pulse=72                       (BP — optional)
-//   &bp_time=2026-05-17T08:00       (BP — optional, defaults to "now" Phoenix)
-//   &steps=8542                     (Steps — cumulative count for the day)
-//   &date=2026-05-17                (Steps — optional, defaults to today Phoenix)
+//   &systolic=120&diastolic=80      (both required)
+//   &pulse=72                       (optional)
+//   &bp_time=2026-05-17T08:00       (optional, defaults to "now" Phoenix)
 //
 // Returns 200 with { ok: true, synced: [...] } on success.
 
@@ -35,10 +33,6 @@ function phoenixDatetimeLocal(d = new Date()) {
   const dp = new Date(ms);
   const pad = n => String(n).padStart(2, '0');
   return `${dp.getUTCFullYear()}-${pad(dp.getUTCMonth() + 1)}-${pad(dp.getUTCDate())}T${pad(dp.getUTCHours())}:${pad(dp.getUTCMinutes())}`;
-}
-
-function phoenixDateISO(d = new Date()) {
-  return phoenixDatetimeLocal(d).slice(0, 10);
 }
 
 const GH_HEADERS = (env) => ({
@@ -58,7 +52,7 @@ async function readGistState(env) {
   const file = gist.files && gist.files[GIST_FILENAME];
   if (!file || !file.content) {
     // Fresh gist with no kidney-advisor.json yet — seed an empty state.
-    return { labs: [], bp: [], meds: [], medLog: {}, diet: [], steps: [],
+    return { labs: [], bp: [], meds: [], medLog: {}, diet: [],
              symptoms: [], questions: [], visit: { date: '', provider: '', notes: '' },
              advisorChat: [], settings: {}, reminders: {}, lastModified: 0 };
   }
@@ -102,22 +96,6 @@ function mergeBP(state, { systolic, diastolic, pulse, bp_time }) {
   return { dup: false, entry };
 }
 
-// Steps merge — sync sources are cumulative-replace per date.
-function mergeSteps(state, { steps, date }) {
-  const n = Math.round(Number(steps));
-  if (!Number.isFinite(n) || n < 0) return null;
-  if (!Array.isArray(state.steps)) state.steps = [];
-  const d = (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) ? date : phoenixDateISO();
-  state.steps = state.steps.filter(s => !(s.date === d && s.source !== 'manual'));
-  const entry = {
-    id: uid(), date: d, steps: n, source: 'shortcut',
-    time: new Date().toISOString(),
-  };
-  state.steps.push(entry);
-  state.steps.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-  return entry;
-}
-
 function jsonResponse(status, body) {
   return new Response(JSON.stringify(body), {
     status,
@@ -146,16 +124,8 @@ async function handleSync(url, env) {
     else if (r) synced.push(`BP ${r.entry.systolic}/${r.entry.diastolic}${r.entry.pulse ? '·' + r.entry.pulse : ''} @ ${r.entry.datetime}`);
   }
 
-  if (params.has('steps')) {
-    const entry = mergeSteps(state, {
-      steps: params.get('steps'),
-      date: params.get('date'),
-    });
-    if (entry) synced.push(`${entry.steps.toLocaleString()} steps on ${entry.date}`);
-  }
-
   if (!synced.length && !skipped.length) {
-    return jsonResponse(400, { ok: false, error: 'no valid params (need systolic+diastolic or steps)' });
+    return jsonResponse(400, { ok: false, error: 'no valid params (need systolic+diastolic)' });
   }
 
   if (synced.length) {

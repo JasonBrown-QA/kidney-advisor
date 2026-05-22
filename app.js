@@ -37,7 +37,6 @@ const DEFAULT_SETTINGS = {
   carbsTarget: 275,
   fatTarget: 73,
   fiberTarget: 30,
-  stepsTarget: 8000,
   bpSys: 130,
   bpDia: 80,
   settingsProfileVersion: 1,
@@ -125,7 +124,6 @@ function blankState() {
     meds: [],
     medLog: {},
     diet: [],
-    steps: [],
     symptoms: [],
     questions: [],
     visit: { date: '', provider: '', notes: '' },
@@ -603,27 +601,6 @@ function sumDietTotals(entries) {
   }, { calories: 0, carbs: 0, fat: 0, fiber: 0, protein: 0, sodium: 0, potassium: 0, phosphorus: 0, fluids: 0 });
 }
 
-// ─── Steps tracking ──────────────────────────────────────────────────────
-// `state.steps` is an array of { id, date, steps, source, time }.
-//   - source='manual': additive (user logs +500 walking around)
-//   - source='shortcut' or 'healthkit': CUMULATIVE for the day (Apple Watch
-//     reports total day-so-far). When a sync arrives, we drop any existing
-//     non-manual entries for that date and push the new authoritative value.
-//   - For the day total: if any sync entry exists for the date, prefer the
-//     highest sync value (latest cumulative); otherwise sum the manuals.
-//     This way users can do quick manual logs early, then a single Apple
-//     Watch sync rolls up everything without double-counting.
-function totalStepsForDate(dateStr) {
-  if (!Array.isArray(state.steps)) return 0;
-  const dayEntries = state.steps.filter(s => s.date === dateStr);
-  if (!dayEntries.length) return 0;
-  const syncEntries = dayEntries.filter(s => s.source !== 'manual');
-  if (syncEntries.length) {
-    return Math.max(...syncEntries.map(s => Number(s.steps) || 0));
-  }
-  return dayEntries.reduce((sum, s) => sum + (Number(s.steps) || 0), 0);
-}
-
 // Current local time in YYYY-MM-DDTHH:MM, anchored to Phoenix tz (matches the
 // format the BP datetime-local input uses).
 function nowDatetimePhoenix() {
@@ -673,90 +650,11 @@ function logBP({ systolic, diastolic, pulse, datetime, position, notes, source }
   return entry;
 }
 
-function logSteps(count, opts = {}) {
-  count = Math.round(Number(count));
-  if (!count || isNaN(count) || count < 0) return;
-  const date = opts.date || todayISO();
-  const source = opts.source || 'manual';
-  if (!Array.isArray(state.steps)) state.steps = [];
-  if (source !== 'manual') {
-    // Drop earlier sync entries for this date; the new sync is authoritative.
-    state.steps = state.steps.filter(s => !(s.date === date && s.source !== 'manual'));
-  }
-  state.steps.push({
-    id: uid(),
-    date,
-    steps: count,
-    source,
-    time: new Date().toISOString(),
-  });
-  state.steps.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-  save();
-  if (!opts.skipRender) renderAll();
-  return count;
-}
-
-// Render the dedicated Steps card on the Dashboard.
-function renderStepsCard() {
-  const today = todayISO();
-  const total = totalStepsForDate(today);
-  const target = state.settings.stepsTarget || 8000;
-  const pct = target > 0 ? Math.min(100, (total / target) * 100) : 0;
-  const remaining = Math.max(0, target - total);
-
-  const countEl = document.getElementById('steps-today-count');
-  const targetEl = document.getElementById('steps-today-target');
-  const barEl = document.getElementById('steps-today-bar');
-  const remainEl = document.getElementById('steps-today-remaining');
-  const statusEl = document.getElementById('steps-source-status');
-
-  if (!countEl) return; // dashboard not rendered yet
-
-  countEl.textContent = total.toLocaleString();
-  if (targetEl) targetEl.textContent = target.toLocaleString();
-  if (barEl) {
-    barEl.style.width = pct + '%';
-    barEl.className = 'steps-progress-fill' + (pct >= 100 ? ' done' : pct >= 50 ? ' mid' : '');
-  }
-  if (remainEl) {
-    remainEl.textContent = pct >= 100
-      ? `🎉 +${(total - target).toLocaleString()} over target`
-      : `${remaining.toLocaleString()} steps to go`;
-  }
-
-  if (statusEl) {
-    if (!Array.isArray(state.steps)) state.steps = [];
-    const todays = state.steps.filter(s => s.date === today);
-    if (!todays.length) {
-      statusEl.innerHTML = '<span class="steps-source-empty">No entries yet today — quick-log below or sync from Apple Watch.</span>';
-    } else {
-      const sorted = [...todays].sort((a, b) => (b.time || '').localeCompare(a.time || ''));
-      const latest = sorted[0];
-      const srcLabel = latest.source === 'shortcut' ? 'Apple Watch (Shortcut)'
-                     : latest.source === 'healthkit' ? 'Apple Health import'
-                     : latest.source === 'url' ? 'URL sync'
-                     : 'Manual';
-      const manualCount = todays.filter(s => s.source === 'manual').length;
-      const syncCount = todays.filter(s => s.source !== 'manual').length;
-      const breakdown = syncCount
-        ? `<span class="steps-tag steps-tag-sync">${syncCount} sync</span>`
-        : '';
-      const manuals = manualCount
-        ? `<span class="steps-tag steps-tag-manual">${manualCount} manual</span>`
-        : '';
-      statusEl.innerHTML = `Latest: <strong>${Number(latest.steps).toLocaleString()}</strong> via ${escapeHtml(srcLabel)} · ${escapeHtml(phx.short(latest.time))} AZ ${breakdown} ${manuals}`;
-    }
-  }
-}
-
 function renderDietBars(container) {
   const today = todayISO();
   const todays = state.diet.filter(d => d.date === today);
   const totals = sumDietTotals(todays);
-  const stepsToday = totalStepsForDate(today);
 
-  // Steps treat "over target" as good (the more, the better) — invert the
-  // color logic vs nutritional limits where over-target is a problem.
   const bars = [
     { key: 'calories',   label: 'Calories',   unit: 'kcal', target: state.settings.caloriesTarget,   value: totals.calories },
     { key: 'carbs',      label: 'Carbs',      unit: 'g',  target: state.settings.carbsTarget,      value: totals.carbs },
@@ -767,23 +665,15 @@ function renderDietBars(container) {
     { key: 'potassium',  label: 'Potassium',  unit: 'mg', target: state.settings.potassiumTarget,  value: totals.potassium },
     { key: 'phosphorus', label: 'Phosphorus', unit: 'mg', target: state.settings.phosphorusTarget, value: totals.phosphorus },
     { key: 'fluids',     label: 'Fluids',     unit: 'oz', target: state.settings.fluidTarget,      value: totals.fluids },
-    { key: 'steps',      label: 'Steps',      unit: '',   target: state.settings.stepsTarget || 8000, value: stepsToday, invert: true },
   ];
 
   container.innerHTML = bars.map(b => {
     const pct = b.target > 0 ? Math.min(100, (b.value / b.target) * 100) : 0;
-    let cls;
-    if (b.invert) {
-      cls = pct >= 100 ? '' : pct >= 50 ? 'warn' : 'bad';
-    } else {
-      cls = pct >= 100 ? 'bad' : pct >= 80 ? 'warn' : '';
-    }
-    const displayValue = b.key === 'steps' ? Math.round(b.value).toLocaleString() : Math.round(b.value);
-    const displayTarget = b.key === 'steps' ? Number(b.target).toLocaleString() : b.target;
+    const cls = pct >= 100 ? 'bad' : pct >= 80 ? 'warn' : '';
     return `<div class="diet-bar">
       <div class="diet-bar-label">${b.label}</div>
       <div class="diet-bar-track"><div class="diet-bar-fill ${cls}" style="width:${pct}%"></div></div>
-      <div class="diet-bar-value">${displayValue} / ${displayTarget}${b.unit ? ' ' + b.unit : ''}</div>
+      <div class="diet-bar-value">${Math.round(b.value)} / ${b.target}${b.unit ? ' ' + b.unit : ''}</div>
     </div>`;
   }).join('');
 
@@ -825,15 +715,10 @@ function renderDietHistory() {
     if (!d.date || d.date === today) continue;
     (byDate[d.date] = byDate[d.date] || []).push(d);
   }
-  const dates = Object.keys(byDate).sort().reverse();
-
-  // Collect all dates with either diet or step entries (skip today)
-  const stepDays = new Set((state.steps || []).filter(s => s.date && s.date !== today).map(s => s.date));
-  const allDates = new Set([...dates, ...stepDays]);
-  const datesAll = [...allDates].sort().reverse();
+  const datesAll = Object.keys(byDate).sort().reverse();
 
   if (!datesAll.length) {
-    tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;color:var(--text-muted)">No previous days logged yet.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--text-muted)">No previous days logged yet.</td></tr>`;
     if (detail) { detail.hidden = true; detail.innerHTML = ''; }
     if (countEl) countEl.textContent = '';
     return;
@@ -851,24 +736,16 @@ function renderDietHistory() {
     potassium: state.settings.potassiumTarget,
     phosphorus: state.settings.phosphorusTarget,
     fluids: state.settings.fluidTarget,
-    steps: state.settings.stepsTarget || 8000,
   };
   const cell = (val, target, decimals = 0) => {
     const v = Math.round(val);
     const cls = target > 0 && val >= target ? 'warn' : '';
     return `<td class="${cls}">${decimals > 0 ? val.toFixed(decimals) : v}</td>`;
   };
-  // Steps: hit-target is GOOD (not warn). Render with comma-thousands.
-  const stepsCell = (val, target) => {
-    const v = Math.round(val);
-    const cls = target > 0 && val >= target ? 'good' : '';
-    return `<td class="${cls}">${v.toLocaleString()}</td>`;
-  };
 
   tbody.innerHTML = datesAll.map(date => {
     const dayDiet = byDate[date] || [];
     const t = sumDietTotals(dayDiet);
-    const stepsT = totalStepsForDate(date);
     return `<tr data-history-date="${date}" style="cursor:pointer">
       <td>${fmt.date(date)}</td>
       ${cell(t.calories, targets.calories)}
@@ -880,7 +757,6 @@ function renderDietHistory() {
       ${cell(t.potassium, targets.potassium)}
       ${cell(t.phosphorus, targets.phosphorus)}
       ${cell(t.fluids, targets.fluids, 1)}
-      ${stepsCell(stepsT, targets.steps)}
     </tr>`;
   }).join('');
 
@@ -3171,7 +3047,6 @@ document.getElementById('bp-quick-form').addEventListener('submit', e => {
 
 function renderDiet() {
   renderDietBars(document.getElementById('diet-bars'));
-  renderStepsCard();
   renderDietHistory();
 
   const today = todayISO();
@@ -3410,9 +3285,9 @@ document.getElementById('import-file').addEventListener('change', e => {
 // ─── Merge-import (additive, dedup, doesn't wipe recent data) ────────────
 // Reads a JSON file in the same shape as Export JSON but only adds labs,
 // BP readings, meds (and optionally questions/symptoms) without touching
-// diet, steps, advisor chat, settings, reminders. Useful for restoring
-// historical health records into a state that already has recent diet/
-// step tracking you don't want to lose.
+// diet, advisor chat, settings, reminders. Useful for restoring historical
+// health records into a state that already has recent diet tracking you
+// don't want to lose.
 function mergeImportData(incoming) {
   const result = { labs: { added: 0, skipped: 0 }, bp: { added: 0, skipped: 0 }, meds: { added: 0, skipped: 0 }, symptoms: { added: 0, skipped: 0 } };
   if (!incoming || typeof incoming !== 'object') throw new Error('Not a JSON object.');
@@ -3519,7 +3394,7 @@ document.getElementById('merge-import-file')?.addEventListener('change', e => {
       if (meds) parts.push(`${meds} meds`);
       if (syms) parts.push(`${syms} symptom entries`);
       if (!parts.length) { alert('Nothing to merge — file has no labs / bp / meds / symptoms.'); return; }
-      if (!confirm(`Merge ${parts.join(' + ')} from this file? Existing entries are deduplicated; diet, steps, advisor chat, settings, reminders are NOT touched.`)) return;
+      if (!confirm(`Merge ${parts.join(' + ')} from this file? Existing entries are deduplicated; diet, advisor chat, settings, reminders are NOT touched.`)) return;
       const r = mergeImportData(incoming);
       save();
       renderAll();
@@ -3544,53 +3419,14 @@ document.getElementById('btn-clear').addEventListener('click', () => {
 const btnMoveToday = document.getElementById('btn-move-today-to-yesterday');
 if (btnMoveToday) btnMoveToday.addEventListener('click', moveTodayEntriesToYesterday);
 
-// ─── Steps card event wiring ─────────────────────────────────────────────
-function wireStepsCard() {
-  const card = document.getElementById('steps-card');
+// ─── BP automation card event wiring ─────────────────────────────────────
+function wireBPAutomationCard() {
+  const card = document.getElementById('bp-automation-card');
   if (!card) return;
 
-  // Quick-add chips
-  card.querySelectorAll('[data-steps-add]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const n = parseInt(btn.dataset.stepsAdd, 10);
-      if (n > 0) {
-        logSteps(n, { source: 'manual' });
-        flash(`+${n.toLocaleString()} steps logged`);
-      }
-    });
-  });
-
-  // Custom add (additive)
-  const customForm = document.getElementById('steps-custom-form');
-  if (customForm) {
-    customForm.addEventListener('submit', e => {
-      e.preventDefault();
-      const input = document.getElementById('steps-custom-input');
-      const n = parseInt(input.value, 10);
-      if (!n || n <= 0) { flash('Enter a step count greater than 0.'); return; }
-      logSteps(n, { source: 'manual' });
-      input.value = '';
-      flash(`+${n.toLocaleString()} steps logged`);
-    });
-  }
-
-  // Set today's total (replaces sync entries)
-  const setTotalForm = document.getElementById('steps-set-total-form');
-  if (setTotalForm) {
-    setTotalForm.addEventListener('submit', e => {
-      e.preventDefault();
-      const input = document.getElementById('steps-set-total-input');
-      const n = parseInt(input.value, 10);
-      if (!n || n < 0) { flash('Enter a step count.'); return; }
-      logSteps(n, { source: 'shortcut' });
-      input.value = '';
-      flash(`Today's total set to ${n.toLocaleString()} steps`);
-    });
-  }
-
-  // Apple Health file picker
-  const healthBtn = document.getElementById('btn-steps-health-pick');
-  const healthFile = document.getElementById('steps-health-file');
+  // Apple Health file picker (BP-only backfill)
+  const healthBtn = document.getElementById('btn-bp-health-pick');
+  const healthFile = document.getElementById('bp-health-file');
   if (healthBtn && healthFile) {
     healthBtn.addEventListener('click', () => healthFile.click());
     healthFile.addEventListener('change', e => {
@@ -3600,19 +3436,9 @@ function wireStepsCard() {
     });
   }
 
-  // Shortcut URL generators
   const baseUrl = () => (location.origin && !location.origin.startsWith('file'))
     ? (location.origin + location.pathname)
     : 'https://jasonbrown-qa.github.io/kidney-advisor/';
-
-  const btnStepsTmpl = document.getElementById('btn-steps-shortcut-copy');
-  if (btnStepsTmpl) {
-    btnStepsTmpl.addEventListener('click', async () => {
-      const url = baseUrl() + '?steps=[Statistic]';
-      const ok = await copyToClipboard(url);
-      flash(ok ? 'Steps URL copied — paste into your Shortcut\'s URL action, then drop the Statistic variable into [Statistic]' : 'Could not copy automatically');
-    });
-  }
 
   const btnBPTmpl = document.getElementById('btn-bp-shortcut-copy');
   if (btnBPTmpl) {
@@ -3620,15 +3446,6 @@ function wireStepsCard() {
       const url = baseUrl() + '?systolic=[Sys]&diastolic=[Dia]&bp_time=[WhenStr]';
       const ok = await copyToClipboard(url);
       flash(ok ? 'BP URL copied — paste into Shortcut\'s URL action, replace variables' : 'Could not copy automatically');
-    });
-  }
-
-  const btnCombinedTmpl = document.getElementById('btn-combined-shortcut-copy');
-  if (btnCombinedTmpl) {
-    btnCombinedTmpl.addEventListener('click', async () => {
-      const url = baseUrl() + '?steps=[Statistic]&systolic=[Sys]&diastolic=[Dia]&bp_time=[WhenStr]';
-      const ok = await copyToClipboard(url);
-      flash(ok ? 'Combined URL copied — one Shortcut, both syncs' : 'Could not copy automatically');
     });
   }
 }
@@ -3703,7 +3520,7 @@ document.getElementById('btn-paste-merge')?.addEventListener('click', async () =
   if (meds) parts.push(`${meds} meds`);
   if (syms) parts.push(`${syms} symptom entries`);
   if (!parts.length) { alert('Nothing to merge — pasted content has no labs / bp / meds / symptoms.'); return; }
-  if (!confirm(`Merge ${parts.join(' + ')} from the pasted content? Existing entries are deduplicated; diet, steps, advisor chat, settings, reminders are NOT touched.`)) return;
+  if (!confirm(`Merge ${parts.join(' + ')} from the pasted content? Existing entries are deduplicated; diet, advisor chat, settings, reminders are NOT touched.`)) return;
   try {
     const r = mergeImportData(incoming);
     save();
@@ -4914,7 +4731,7 @@ async function init() {
   checkInstallHash().catch(err => console.error('Install hash error', err));
   checkHashImport().catch(err => console.error('Hash import error', err));
   checkAutomationURLParams();
-  wireStepsCard();
+  wireBPAutomationCard();
   setupPullToRefresh();
   renderCloudSyncUI();
 
@@ -5178,16 +4995,13 @@ async function checkInstallHash() {
   }
 }
 
-// ─── Automation URL handler (iOS Shortcuts / Apple Watch) ────────────────
+// ─── Automation URL handler (iOS Shortcuts) ──────────────────────────────
 // Single entry point for everything an iOS Shortcut can push into the PWA.
 // Supports both query string AND hash so it survives iOS PWA quirks: when
 // the standalone window is already open, Safari sometimes refocuses without
 // running init() — the hash variant + visibilitychange re-scan covers that.
 //
 // Supported keys:
-//   ?steps=N                  daily step count (cumulative for the day)
-//   &date=YYYY-MM-DD          optional date for the steps (defaults to today)
-//   ?steps_batch=YYYY-MM-DD:N,YYYY-MM-DD:N,...
 //   ?systolic=120&diastolic=80&pulse=72&bp_time=2026-05-17T08:00
 //                              (bp_time optional; defaults to now in Phoenix)
 //   ?bp_batch=YYYY-MM-DDTHH:MM:SYS/DIA[/PULSE],YYYY-MM-DDTHH:MM:SYS/DIA[/PULSE],...
@@ -5202,45 +5016,15 @@ function checkAutomationURLParams() {
     : new URLSearchParams();
   const get = (key) => searchParams.get(key) ?? hashParams.get(key);
 
-  const stepsStr   = get('steps');
-  const stepsBatch = get('steps_batch');
-  const sysStr     = get('systolic');
-  const diaStr     = get('diastolic');
-  const pulseStr   = get('pulse');
-  const bpTime     = get('bp_time');
-  const bpBatch    = get('bp_batch');
-  const dateOverride = get('date');
+  const sysStr   = get('systolic');
+  const diaStr   = get('diastolic');
+  const pulseStr = get('pulse');
+  const bpTime   = get('bp_time');
+  const bpBatch  = get('bp_batch');
 
-  if (!stepsStr && !stepsBatch && !sysStr && !bpBatch) return;
+  if (!sysStr && !bpBatch) return;
 
   const summary = [];
-
-  // Steps — single cumulative count for the day
-  if (stepsStr) {
-    const n = Math.round(Number(stepsStr));
-    if (n > 0) {
-      const date = (dateOverride && /^\d{4}-\d{2}-\d{2}$/.test(dateOverride.trim()))
-        ? dateOverride.trim() : todayISO();
-      logSteps(n, { date, source: 'shortcut', skipRender: true });
-      summary.push(`${n.toLocaleString()} steps`);
-    }
-  }
-
-  // Steps — multi-day backfill batch
-  if (stepsBatch) {
-    let count = 0;
-    for (const piece of stepsBatch.split(',')) {
-      const [date, c] = piece.split(':');
-      if (!date || !c) continue;
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date.trim())) continue;
-      const n = Math.round(Number(c));
-      if (n > 0) {
-        logSteps(n, { date: date.trim(), source: 'shortcut', skipRender: true });
-        count++;
-      }
-    }
-    if (count) summary.push(`${count} step day${count === 1 ? '' : 's'}`);
-  }
 
   // BP — single reading
   if (sysStr && diaStr) {
@@ -5279,7 +5063,7 @@ function checkAutomationURLParams() {
   if (summary.length) save();
 
   // Strip all automation params from URL so refresh doesn't re-import.
-  const consumed = ['steps', 'steps_batch', 'date', 'systolic', 'diastolic', 'pulse', 'bp_time', 'bp_batch'];
+  const consumed = ['systolic', 'diastolic', 'pulse', 'bp_time', 'bp_batch'];
   consumed.forEach(k => searchParams.delete(k));
   // Hash params — preserve the #data= import variant, drop our own keys.
   let newHash = location.hash;
@@ -5297,37 +5081,16 @@ function checkAutomationURLParams() {
   }
 }
 
-// ─── Apple Health export.xml import (steps + BP backfill) ────────────────
-// Reads:
-//   - HKQuantityTypeIdentifierStepCount records (sum per Phoenix-local date)
-//   - HKCorrelationTypeIdentifierBloodPressure correlations (each wraps a
-//     Systolic + Diastolic Record pair; pull both via direct children).
-// Steps: one source='healthkit' entry per date (replaces prior sync entries).
-// BP: one entry per correlation, idempotent via logBP() dedup logic.
+// ─── Apple Health export.xml import (BP backfill) ────────────────────────
+// Reads HKCorrelationTypeIdentifierBloodPressure correlations (each wraps a
+// Systolic + Diastolic Record pair; pull both via direct children).
+// One entry per correlation, idempotent via logBP() dedup logic.
 function parseAppleHealth(xmlText) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(xmlText, 'application/xml');
   const parseErr = doc.querySelector('parsererror');
   if (parseErr) throw new Error('Could not parse export.xml — file may be corrupt.');
 
-  // --- Steps ---
-  const stepsByDate = new Map();
-  const stepRecords = doc.querySelectorAll('Record[type="HKQuantityTypeIdentifierStepCount"]');
-  stepRecords.forEach(rec => {
-    const start = rec.getAttribute('startDate');
-    const value = Number(rec.getAttribute('value'));
-    if (!start || !Number.isFinite(value) || value <= 0) return;
-    const d = new Date(start);
-    if (isNaN(d.getTime())) return;
-    const parts = new Intl.DateTimeFormat('en-CA', {
-      timeZone: PHOENIX_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
-    }).formatToParts(d);
-    const m = Object.fromEntries(parts.map(p => [p.type, p.value]));
-    const dateKey = `${m.year}-${m.month}-${m.day}`;
-    stepsByDate.set(dateKey, (stepsByDate.get(dateKey) || 0) + value);
-  });
-
-  // --- Blood Pressure ---
   // Apple Health groups sys + dia into a single Correlation element.
   const bpEntries = [];
   const correlations = doc.querySelectorAll('Correlation[type="HKCorrelationTypeIdentifierBloodPressure"]');
@@ -5364,11 +5127,11 @@ function parseAppleHealth(xmlText) {
     });
   });
 
-  return { stepsByDate, bpEntries };
+  return { bpEntries };
 }
 
 async function handleAppleHealthFile(file) {
-  const status = document.getElementById('steps-health-status');
+  const status = document.getElementById('bp-health-status');
   const setStatus = (msg, kind = '') => { if (status) { status.textContent = msg; status.dataset.kind = kind; } };
   setStatus('Reading file…');
   try {
@@ -5381,38 +5144,28 @@ async function handleAppleHealthFile(file) {
     }
     const xmlText = await file.text();
     setStatus('Parsing health records…');
-    const { stepsByDate, bpEntries } = parseAppleHealth(xmlText);
-    if (!stepsByDate.size && !bpEntries.length) {
-      setStatus('No StepCount or BloodPressure records found. Make sure you exported from Apple Health (Health app → profile → Export All Health Data).', 'bad');
+    const { bpEntries } = parseAppleHealth(xmlText);
+    if (!bpEntries.length) {
+      setStatus('No BloodPressure records found. Make sure you exported from Apple Health (Health app → profile → Export All Health Data).', 'bad');
       return;
     }
 
-    // Limit to last 365 days for both data types
     const today = todayISO();
     const cutoff = new Date(today + 'T00:00:00-07:00');
     cutoff.setDate(cutoff.getDate() - 365);
     const cutoffStr = cutoff.toISOString().slice(0, 10);
 
-    const eligibleSteps = [...stepsByDate.entries()].filter(([date]) => date >= cutoffStr);
     const eligibleBP = bpEntries.filter(b => b.datetime.slice(0, 10) >= cutoffStr);
-    const totalStepDays = eligibleSteps.length;
-    const totalSteps = eligibleSteps.reduce((sum, [, v]) => sum + v, 0);
     const totalBP = eligibleBP.length;
 
-    if (!totalStepDays && !totalBP) {
-      setStatus('No records in the last 365 days.', 'bad');
+    if (!totalBP) {
+      setStatus('No BP readings in the last 365 days.', 'bad');
       return;
     }
 
-    const parts = [];
-    if (totalStepDays) parts.push(`${totalStepDays} days of steps (${Math.round(totalSteps).toLocaleString()} total)`);
-    if (totalBP) parts.push(`${totalBP} BP reading${totalBP === 1 ? '' : 's'}`);
-    const ok = confirm(`Import from Apple Health: ${parts.join(' + ')}? Steps will replace existing Apple-Watch-sourced entries; BP readings are deduplicated by datetime + systolic + diastolic so re-imports are safe.`);
+    const ok = confirm(`Import ${totalBP} BP reading${totalBP === 1 ? '' : 's'} from Apple Health? Deduplicated by datetime + systolic + diastolic so re-imports are safe.`);
     if (!ok) { setStatus('Import cancelled.'); return; }
 
-    for (const [date, count] of eligibleSteps) {
-      logSteps(Math.round(count), { date, source: 'healthkit', skipRender: true });
-    }
     let bpAdded = 0;
     let bpSkipped = 0;
     for (const b of eligibleBP) {
@@ -5422,11 +5175,9 @@ async function handleAppleHealthFile(file) {
     }
     save();
     renderAll();
-    const summary = [];
-    if (totalStepDays) summary.push(`${totalStepDays} step day${totalStepDays === 1 ? '' : 's'}`);
-    if (bpAdded) summary.push(`${bpAdded} BP reading${bpAdded === 1 ? '' : 's'}${bpSkipped ? ` (${bpSkipped} dupes skipped)` : ''}`);
-    setStatus(`Imported ${summary.join(' + ')}.`, 'good');
-    flash(`Imported from Apple Health: ${summary.join(' + ')}`);
+    const detail = `${bpAdded} BP reading${bpAdded === 1 ? '' : 's'}${bpSkipped ? ` (${bpSkipped} dupes skipped)` : ''}`;
+    setStatus(`Imported ${detail}.`, 'good');
+    flash(`Imported from Apple Health: ${detail}`);
   } catch (err) {
     console.error('Health import failed', err);
     setStatus('Import failed: ' + (err.message || String(err)), 'bad');
@@ -5588,7 +5339,7 @@ function smartMerge(localState, remoteState) {
   const merged = { ...blankState(), ...localState };
 
   // Array fields with stable per-entry ids: union by id, preferred side wins on collision.
-  const ARRAY_KEYS = ['labs', 'bp', 'meds', 'diet', 'steps', 'symptoms', 'questions'];
+  const ARRAY_KEYS = ['labs', 'bp', 'meds', 'diet', 'symptoms', 'questions'];
   for (const key of ARRAY_KEYS) {
     const local = Array.isArray(localState[key]) ? localState[key] : [];
     const remote = Array.isArray(remoteState[key]) ? remoteState[key] : [];
@@ -5610,7 +5361,7 @@ function smartMerge(localState, remoteState) {
   }
 
   // Sort the date/datetime-bearing arrays.
-  ['labs', 'symptoms', 'diet', 'steps'].forEach(k => {
+  ['labs', 'symptoms', 'diet'].forEach(k => {
     if (Array.isArray(merged[k])) merged[k].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   });
   if (Array.isArray(merged.bp)) merged.bp.sort((a, b) => (a.datetime || '').localeCompare(b.datetime || ''));

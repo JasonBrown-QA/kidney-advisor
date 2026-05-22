@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Kidney Advisor</title>
-<link rel="stylesheet" href="styles.css?v=20260522-0900" />
+<link rel="stylesheet" href="styles.css?v=20260522-0844" />
 
 <!-- PWA / iOS home-screen app -->
 <link rel="manifest" href="manifest.json" />
@@ -198,6 +198,86 @@
           <tbody></tbody>
         </table>
       </div>
+    </div>
+
+    <div class="card" id="bp-automation-card">
+      <h3>Apple Health / Smart BP automation</h3>
+      <details class="bp-sync-details">
+        <summary>iOS Shortcut + Cloudflare Worker setup</summary>
+        <div class="bp-sync-body">
+          <p class="hint" style="margin-top:8px">Smart BP and any other cuff app writes readings into Apple Health. An iOS Shortcut can pick up the latest reading and forward it to a tiny Cloudflare Worker that drops it into your sync gist — the PWA's silent auto-pull surfaces it on its next focus. Result: fully hands-off background sync.</p>
+
+          <p class="hint" style="margin-top:10px;font-weight:700;color:var(--text)">Blood Pressure Shortcut</p>
+          <ol class="bp-sync-steps">
+            <li>iPhone → <strong>Shortcuts</strong> → <strong>+</strong>.</li>
+            <li><em>Find Health Samples</em>: Sample Type = <strong>Blood Pressure: Systolic</strong>, Sort = <em>Latest First</em>, Limit = <strong>1</strong>. (Magic variable: "Health Samples" → rename to "Sys Sample")</li>
+            <li><em>Get Details of Health Sample</em>: get the <strong>Quantity</strong> of <em>Sys Sample</em>. (Variable: "Sys")</li>
+            <li><em>Get Details of Health Sample</em>: get the <strong>Start Date</strong> of <em>Sys Sample</em>. (Variable: "When")</li>
+            <li><em>Format Date</em>: <em>When</em>, Format = Custom, format string <code>yyyy-MM-dd'T'HH:mm</code>. (Variable: "WhenStr")</li>
+            <li><em>Find Health Samples</em>: Sample Type = <strong>Blood Pressure: Diastolic</strong>, Sort = <em>Latest First</em>, Limit = <strong>1</strong>. Rename variable to "Dia Sample".</li>
+            <li><em>Get Details of Health Sample</em>: get the <strong>Quantity</strong> of <em>Dia Sample</em>. (Variable: "Dia")</li>
+            <li><em>URL</em>:
+              <code class="bp-shortcut-url">https://jasonbrown-qa.github.io/kidney-advisor/?systolic=<em>[Sys]</em>&amp;diastolic=<em>[Dia]</em>&amp;bp_time=<em>[WhenStr]</em></code>
+            </li>
+            <li><em>Open URLs</em>.</li>
+            <li>Name it <em>Sync BP</em>. Tap whenever you log a BP cuff reading into Health.</li>
+          </ol>
+
+          <p class="hint" style="margin-top:14px;font-weight:700;color:var(--text)">Make it <em>truly</em> automatic (hands-off, no app-switch)</p>
+          <p class="hint">The Shortcut above briefly opens the PWA each run. To bypass that — Smart BP records, reading appears in the app with zero taps and zero app-switch — replace <em>Open URLs</em> with <em>Get Contents of URL</em> pointed at a tiny Cloudflare Worker that writes straight into your sync gist. The PWA's existing silent auto-pull picks the new reading up on its next focus.</p>
+          <p class="hint" style="margin-top:6px"><strong>1. Deploy the bridge Worker (~5 min, free):</strong></p>
+          <ol class="bp-sync-steps">
+            <li>Sign in to <a href="https://dash.cloudflare.com" target="_blank">dash.cloudflare.com</a> → <strong>Workers &amp; Pages</strong> → <strong>Create</strong> → <strong>Create Worker</strong>. Name it <code>kidney-sync</code> (or anything).</li>
+            <li>Tap <strong>Deploy</strong> on the starter Worker, then <strong>Edit Code</strong>.</li>
+            <li>Replace the entire <code>worker.js</code> with the contents of <code>worker/index.js</code> from this repo (<a href="https://github.com/JasonBrown-QA/kidney-advisor/blob/main/worker/index.js" target="_blank">view on GitHub</a>). Tap <strong>Deploy</strong>.</li>
+            <li>Back in the Worker overview → <strong>Settings</strong> → <strong>Variables and Secrets</strong> → add three <strong>secrets</strong>:
+              <ul>
+                <li><code>GIST_ID</code> — the ID of your kidney-advisor.json gist. Find it via Settings → Cross-device auto-sync; or open <a href="https://gist.github.com/" target="_blank">gist.github.com</a>, click your <code>kidney-advisor.json</code>, copy the long hex from the URL.</li>
+                <li><code>GH_TOKEN</code> — the same GitHub PAT (with <code>gist</code> scope) the PWA uses for cloud sync. Generate one at <a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=Kidney+Advisor+Worker" target="_blank">github.com/settings/tokens/new</a> if you want a Worker-only token.</li>
+                <li><code>SYNC_TOKEN</code> — any opaque random string you make up (32+ chars). The Shortcut will send this to authenticate.</li>
+              </ul>
+            </li>
+            <li>Note your Worker URL — looks like <code>https://kidney-sync.&lt;your-name&gt;.workers.dev</code>. Test it: hit <code>https://kidney-sync.&lt;your-name&gt;.workers.dev/health</code> in a browser. Should return <code>{"ok":true,"service":"kidney-advisor-sync"}</code>.</li>
+          </ol>
+          <p class="hint" style="margin-top:10px"><strong>2. Update your Sync BP Shortcut to use the Worker (1 min):</strong></p>
+          <ol class="bp-sync-steps">
+            <li>Open the existing <strong>Sync BP</strong> Shortcut. Delete the last two actions (<em>URL</em> and <em>Open URLs</em>).</li>
+            <li>Add action <strong>Text</strong> → paste:
+              <code class="bp-shortcut-url">https://kidney-sync.&lt;your-name&gt;.workers.dev/sync?token=&lt;SYNC_TOKEN&gt;&amp;systolic=<em>[Sys]</em>&amp;diastolic=<em>[Dia]</em>&amp;bp_time=<em>[WhenStr]</em></code>
+              Replace <code>&lt;your-name&gt;</code> with your Worker subdomain and <code>&lt;SYNC_TOKEN&gt;</code> with the random string you set as a secret. Drag the Sys / Dia / WhenStr variable chips into the bracketed placeholders.
+            </li>
+            <li>Add action <strong>Get Contents of URL</strong>. Tap <strong>Show More</strong> → Method = <strong>GET</strong>. URL field will auto-pick the Text from the previous step.</li>
+            <li>(Optional) Add action <strong>Show Notification</strong> → Title = <em>BP synced</em> → Body = (drag the <em>Contents of URL</em> variable in) — gives you a tiny banner confirming the sync. Skip if you want truly silent operation.</li>
+            <li>Tap <strong>Done</strong>.</li>
+          </ol>
+          <p class="hint" style="margin-top:10px"><strong>3. Verify:</strong> Log a fake BP reading in Smart BP. Wait ~10 seconds. Open the PWA — the reading should already be there (no toast / URL handling needed). The Worker put it in the gist, and the PWA's silent auto-pull on focus fetched it.</p>
+
+          <hr style="margin:14px 0;border:0;border-top:1px solid var(--border)" />
+          <p class="hint" style="margin-top:0;font-weight:700;color:var(--text)">Auto-fire on every new BP reading</p>
+          <p class="hint">Shortcuts → <strong>Automation</strong> → <strong>+</strong> → <em>Health</em> → <em>Vital category</em> = <strong>Heart</strong> → toggle on <strong>Blood Pressure</strong> → action: <strong>Run Shortcut</strong> → pick "Sync BP" → toggle off <strong>Ask Before Running</strong> → tap <strong>Done</strong>. Every time Smart BP (or any cuff app) writes a new reading into Apple Health, iOS fires the Shortcut and the value lands in the app within seconds — completely hands-off.</p>
+          <p class="hint" style="margin-top:6px"><em>Note:</em> Smart BP must be authorized to write to Apple Health (Smart BP app → Settings → Health Sync). On older iOS, the "Health" automation trigger may instead live under <em>Apple Health → Vital category</em>.</p>
+
+          <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+            <button type="button" class="secondary" id="btn-bp-shortcut-copy">Copy BP URL template</button>
+          </div>
+
+          <hr style="margin:18px 0;border:0;border-top:1px solid var(--border)" />
+
+          <p class="hint" style="margin-top:0;font-weight:700;color:var(--text)">One-shot BP backfill from Apple Health export</p>
+          <ol class="bp-sync-steps">
+            <li>iPhone → Health app → tap your profile photo → <strong>Export All Health Data</strong>.</li>
+            <li>Wait a few minutes; Health builds <code>export.zip</code>. Save / share to your Mac or PC.</li>
+            <li>Unzip and locate <code>apple_health_export/export.xml</code>.</li>
+            <li>Upload that <code>.xml</code> file here:</li>
+          </ol>
+          <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
+            <button type="button" class="secondary" id="btn-bp-health-pick">Choose export.xml</button>
+            <input type="file" id="bp-health-file" accept=".xml,application/xml,text/xml" class="visually-hidden-file" />
+            <span class="hint" id="bp-health-status" style="margin:0"></span>
+          </div>
+          <p class="hint">Imports the most recent 365 days of blood-pressure readings. Deduplicated by datetime + systolic + diastolic so re-imports are safe.</p>
+        </div>
+      </details>
     </div>
   </section>
 
@@ -724,7 +804,7 @@
         <button id="btn-install-link-copy" class="secondary" hidden style="margin-top:6px">Copy link</button>
         <p class="hint" id="install-link-warn" hidden style="margin-top:8px;color:#a05a00">Anyone who has this link can read and write your medical-data gist. AirDrop it to yourself or email it to your own address — do not paste into iMessage threads, group chats, or screenshots.</p>
       </div>
-      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260522-0900 — removed step count feature</span></p>
+      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260522-0844 — Remove steps tracking + JS/CSS/Worker cleanup; BP automation moved to BP tab</span></p>
     </div>
 
     <div class="card">
@@ -766,6 +846,6 @@
 </div>
 
 <script src="foods.js"></script>
-<script src="app.js?v=20260522-0900"></script>
+<script src="app.js?v=20260522-0844"></script>
 </body>
 </html>
