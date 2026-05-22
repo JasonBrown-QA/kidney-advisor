@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Kidney Advisor</title>
-<link rel="stylesheet" href="styles.css?v=20260521-1400" />
+<link rel="stylesheet" href="styles.css?v=20260522-0900" />
 
 <!-- PWA / iOS home-screen app -->
 <link rel="manifest" href="manifest.json" />
@@ -255,147 +255,6 @@
       </div>
     </div>
 
-    <div class="card steps-card" id="steps-card">
-      <div class="card-row">
-        <h3 style="margin:0">Steps Today</h3>
-        <span class="steps-source-status hint" id="steps-source-status" style="margin:0"></span>
-      </div>
-
-      <div class="steps-hero">
-        <div class="steps-hero-main">
-          <div class="steps-hero-count"><span id="steps-today-count">0</span></div>
-          <div class="steps-hero-target">of <span id="steps-today-target">8,000</span> goal</div>
-        </div>
-        <div class="steps-hero-progress">
-          <div class="steps-progress-track">
-            <div class="steps-progress-fill" id="steps-today-bar" style="width:0%"></div>
-          </div>
-          <div class="steps-hero-remaining" id="steps-today-remaining">8,000 steps to go</div>
-        </div>
-      </div>
-
-      <div class="steps-quick">
-        <span class="quick-label">Quick add:</span>
-        <button type="button" class="quick-chip" data-steps-add="500">+500</button>
-        <button type="button" class="quick-chip" data-steps-add="1000">+1,000</button>
-        <button type="button" class="quick-chip" data-steps-add="2000">+2,000</button>
-        <button type="button" class="quick-chip" data-steps-add="5000">+5,000</button>
-      </div>
-
-      <div class="steps-forms">
-        <form id="steps-custom-form" class="steps-inline-form">
-          <label>Add steps
-            <input type="number" id="steps-custom-input" min="1" step="1" placeholder="e.g., 750" />
-          </label>
-          <button type="submit" class="secondary">Add</button>
-        </form>
-        <form id="steps-set-total-form" class="steps-inline-form">
-          <label>Set today's total
-            <input type="number" id="steps-set-total-input" min="0" step="1" placeholder="e.g., 8542" />
-          </label>
-          <button type="submit" class="primary">Set</button>
-        </form>
-      </div>
-
-      <details class="steps-sync-details">
-        <summary>Apple Watch / Apple Health automation</summary>
-        <div class="steps-sync-body">
-          <p class="hint" style="margin-top:8px">Apple Watch step counts and Health-app blood-pressure readings live in Apple Health. There's no direct web API, but an iOS Shortcut can read them and open a one-tap sync URL — fully automatic once set up. One Shortcut can sync <strong>both</strong> steps and BP in a single URL.</p>
-
-          <p class="hint" style="margin-top:10px;font-weight:700;color:var(--text)">Steps Shortcut</p>
-          <ol class="steps-sync-steps">
-            <li>iPhone → <strong>Shortcuts</strong> app → <strong>+</strong> to create a new Shortcut.</li>
-            <li><em>Find Health Samples</em>: Sample Type = <strong>Steps</strong>, Start Date = <em>Start of Today</em>, End Date = <em>Current Date</em>.</li>
-            <li><em>Calculate Statistics</em> over that result: <strong>Sum of Quantity</strong>. (Magic variable: "Statistic")</li>
-            <li><em>URL</em>:
-              <code class="steps-shortcut-url">https://jasonbrown-qa.github.io/kidney-advisor/?steps=<em>[Statistic]</em></code>
-            </li>
-            <li><em>Open URLs</em>.</li>
-            <li>Name it <em>Sync Steps</em>. Add to home screen / Watch face for one-tap sync.</li>
-          </ol>
-
-          <p class="hint" style="margin-top:14px;font-weight:700;color:var(--text)">Blood Pressure Shortcut</p>
-          <ol class="steps-sync-steps">
-            <li>iPhone → <strong>Shortcuts</strong> → <strong>+</strong>.</li>
-            <li><em>Find Health Samples</em>: Sample Type = <strong>Blood Pressure: Systolic</strong>, Sort = <em>Latest First</em>, Limit = <strong>1</strong>. (Magic variable: "Health Samples" → rename to "Sys Sample")</li>
-            <li><em>Get Details of Health Sample</em>: get the <strong>Quantity</strong> of <em>Sys Sample</em>. (Variable: "Sys")</li>
-            <li><em>Get Details of Health Sample</em>: get the <strong>Start Date</strong> of <em>Sys Sample</em>. (Variable: "When")</li>
-            <li><em>Format Date</em>: <em>When</em>, Format = Custom, format string <code>yyyy-MM-dd'T'HH:mm</code>. (Variable: "WhenStr")</li>
-            <li><em>Find Health Samples</em>: Sample Type = <strong>Blood Pressure: Diastolic</strong>, Sort = <em>Latest First</em>, Limit = <strong>1</strong>. Rename variable to "Dia Sample".</li>
-            <li><em>Get Details of Health Sample</em>: get the <strong>Quantity</strong> of <em>Dia Sample</em>. (Variable: "Dia")</li>
-            <li><em>URL</em>:
-              <code class="steps-shortcut-url">https://jasonbrown-qa.github.io/kidney-advisor/?systolic=<em>[Sys]</em>&amp;diastolic=<em>[Dia]</em>&amp;bp_time=<em>[WhenStr]</em></code>
-            </li>
-            <li><em>Open URLs</em>.</li>
-            <li>Name it <em>Sync BP</em>. Tap whenever you log a BP cuff reading into Health.</li>
-          </ol>
-
-          <p class="hint" style="margin-top:14px;font-weight:700;color:var(--text)">Combined Steps + BP Shortcut (one daily sync)</p>
-          <p class="hint" style="margin-top:4px">Same as above but at step 8, build the URL as:</p>
-          <code class="steps-shortcut-url" style="display:block;margin-top:4px">https://jasonbrown-qa.github.io/kidney-advisor/?steps=<em>[Statistic]</em>&amp;systolic=<em>[Sys]</em>&amp;diastolic=<em>[Dia]</em>&amp;bp_time=<em>[WhenStr]</em></code>
-          <p class="hint">The app consumes every param it recognizes in one shot — set up once, sync everything together.</p>
-
-          <p class="hint" style="margin-top:14px;font-weight:700;color:var(--text)">Make it <em>truly</em> automatic (hands-off, no app-switch)</p>
-          <p class="hint">The setup above opens the PWA each time the Shortcut runs. To bypass that — Smart BP records, reading appears in the app with zero taps and zero app-switch — replace <em>Open URLs</em> with <em>Get Contents of URL</em> pointed at a tiny Cloudflare Worker that writes straight into your sync gist. The PWA's existing silent auto-pull picks the new reading up on its next focus.</p>
-          <p class="hint" style="margin-top:6px"><strong>1. Deploy the bridge Worker (~5 min, free):</strong></p>
-          <ol class="steps-sync-steps">
-            <li>Sign in to <a href="https://dash.cloudflare.com" target="_blank">dash.cloudflare.com</a> → <strong>Workers &amp; Pages</strong> → <strong>Create</strong> → <strong>Create Worker</strong>. Name it <code>kidney-sync</code> (or anything).</li>
-            <li>Tap <strong>Deploy</strong> on the starter Worker, then <strong>Edit Code</strong>.</li>
-            <li>Replace the entire <code>worker.js</code> with the contents of <code>worker/index.js</code> from this repo (<a href="https://github.com/JasonBrown-QA/kidney-advisor/blob/main/worker/index.js" target="_blank">view on GitHub</a>). Tap <strong>Deploy</strong>.</li>
-            <li>Back in the Worker overview → <strong>Settings</strong> → <strong>Variables and Secrets</strong> → add three <strong>secrets</strong>:
-              <ul>
-                <li><code>GIST_ID</code> — the ID of your kidney-advisor.json gist. Find it via Settings → Cross-device auto-sync; or open <a href="https://gist.github.com/" target="_blank">gist.github.com</a>, click your <code>kidney-advisor.json</code>, copy the long hex from the URL.</li>
-                <li><code>GH_TOKEN</code> — the same GitHub PAT (with <code>gist</code> scope) the PWA uses for cloud sync. Generate one at <a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=Kidney+Advisor+Worker" target="_blank">github.com/settings/tokens/new</a> if you want a Worker-only token.</li>
-                <li><code>SYNC_TOKEN</code> — any opaque random string you make up (32+ chars). The Shortcut will send this to authenticate.</li>
-              </ul>
-            </li>
-            <li>Note your Worker URL — looks like <code>https://kidney-sync.&lt;your-name&gt;.workers.dev</code>. Test it: hit <code>https://kidney-sync.&lt;your-name&gt;.workers.dev/health</code> in a browser. Should return <code>{"ok":true,"service":"kidney-advisor-sync"}</code>.</li>
-          </ol>
-          <p class="hint" style="margin-top:10px"><strong>2. Update your Sync BP Shortcut to use the Worker (1 min):</strong></p>
-          <ol class="steps-sync-steps">
-            <li>Open the existing <strong>Sync BP</strong> Shortcut. Delete the last two actions (<em>URL</em> and <em>Open URLs</em>).</li>
-            <li>Add action <strong>Text</strong> → paste:
-              <code class="steps-shortcut-url">https://kidney-sync.&lt;your-name&gt;.workers.dev/sync?token=&lt;SYNC_TOKEN&gt;&amp;systolic=<em>[Sys]</em>&amp;diastolic=<em>[Dia]</em>&amp;bp_time=<em>[WhenStr]</em></code>
-              Replace <code>&lt;your-name&gt;</code> with your Worker subdomain and <code>&lt;SYNC_TOKEN&gt;</code> with the random string you set as a secret. Drag the Sys / Dia / WhenStr variable chips into the bracketed placeholders.
-            </li>
-            <li>Add action <strong>Get Contents of URL</strong>. Tap <strong>Show More</strong> → Method = <strong>GET</strong>. URL field will auto-pick the Text from the previous step.</li>
-            <li>(Optional) Add action <strong>Show Notification</strong> → Title = <em>BP synced</em> → Body = (drag the <em>Contents of URL</em> variable in) — gives you a tiny banner confirming the sync. Skip if you want truly silent operation.</li>
-            <li>Tap <strong>Done</strong>.</li>
-          </ol>
-          <p class="hint" style="margin-top:10px"><strong>3. Verify:</strong> Log a fake BP reading in Smart BP. Wait ~10 seconds. Open the PWA — the reading should already be there (no toast / URL handling needed). The Worker put it in the gist, and the PWA's silent auto-pull on focus fetched it.</p>
-          <p class="hint" style="margin-top:8px;font-style:italic">Same pattern works for steps: pass <code>?token=...&amp;steps=[Statistic]</code>, or combined: <code>?token=...&amp;steps=[Statistic]&amp;systolic=[Sys]&amp;diastolic=[Dia]&amp;bp_time=[WhenStr]</code>.</p>
-          <hr style="margin:14px 0;border:0;border-top:1px solid var(--border)" />
-          <p class="hint" style="margin-top:14px;font-weight:700;color:var(--text)">Or — simpler-but-not-quite-as-hands-off</p>
-          <p class="hint">If you don't want to set up the Worker, the original <em>Open URLs</em> path still works — readings just briefly bring the PWA forward when the Shortcut fires. Two automation triggers cover most cases:</p>
-          <p class="hint" style="margin-top:6px"><strong>Option A — Time-of-day (steps):</strong> Shortcuts → bottom tab <strong>Automation</strong> → <strong>+</strong> → <em>Time of Day</em> → e.g. 9:00 PM → Daily → action: <strong>Run Shortcut</strong> → pick "Sync Steps" → toggle off <strong>Ask Before Running</strong>. iOS fires it nightly with no taps.</p>
-          <p class="hint" style="margin-top:6px"><strong>Option B — Health Update trigger (BP from Smart BP / any cuff):</strong> Shortcuts → <strong>Automation</strong> → <strong>+</strong> → <em>Health</em> → <em>Vital category</em> = <strong>Heart</strong> → toggle on <strong>Blood Pressure</strong> → action: <strong>Run Shortcut</strong> → pick "Sync BP" → toggle off <strong>Ask Before Running</strong> → tap <strong>Done</strong>. Every time Smart BP (or any cuff app) writes a new reading into Apple Health, iOS will fire the Shortcut and the value lands in the app within seconds — completely hands-off.</p>
-          <p class="hint" style="margin-top:6px"><em>Note:</em> Smart BP must be authorized to write to Apple Health (Smart BP app → Settings → Health Sync). On older iOS, the "Health" automation trigger may instead live under <em>Apple Health → Vital category</em>.</p>
-
-          <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
-            <button type="button" class="secondary" id="btn-steps-shortcut-copy">Copy Steps URL template</button>
-            <button type="button" class="secondary" id="btn-bp-shortcut-copy">Copy BP URL template</button>
-            <button type="button" class="secondary" id="btn-combined-shortcut-copy">Copy combined template</button>
-          </div>
-
-          <hr style="margin:18px 0;border:0;border-top:1px solid var(--border)" />
-
-          <p class="hint" style="margin-top:0;font-weight:700;color:var(--text)">One-shot backfill from Apple Health export</p>
-          <ol class="steps-sync-steps">
-            <li>iPhone → Health app → tap your profile photo → <strong>Export All Health Data</strong>.</li>
-            <li>Wait a few minutes; Health builds <code>export.zip</code>. Save / share to your Mac or PC.</li>
-            <li>Unzip and locate <code>apple_health_export/export.xml</code>.</li>
-            <li>Upload that <code>.xml</code> file here:</li>
-          </ol>
-          <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
-            <button type="button" class="secondary" id="btn-steps-health-pick">Choose export.xml</button>
-            <input type="file" id="steps-health-file" accept=".xml,application/xml,text/xml" class="visually-hidden-file" />
-            <span class="hint" id="steps-health-status" style="margin:0"></span>
-          </div>
-          <p class="hint">Imports the most recent 365 days of both step totals <em>and</em> blood-pressure readings. Step days replace prior Apple-Watch-sourced entries; BP readings are deduplicated so re-imports are safe.</p>
-        </div>
-      </details>
-    </div>
-
     <div class="grid grid-2">
       <div class="card">
         <h3>Quick Water Log</h3>
@@ -509,7 +368,7 @@
       <p class="hint">Past days reset automatically at midnight. Tap a row to view the entries from that day.</p>
       <div class="table-wrap">
         <table id="diet-history-table">
-          <thead><tr><th>Date</th><th>Cal</th><th>Carb</th><th>Fat</th><th>Fib</th><th>Prot</th><th>Na</th><th>K</th><th>P</th><th>Fluids</th><th>Steps</th></tr></thead>
+          <thead><tr><th>Date</th><th>Cal</th><th>Carb</th><th>Fat</th><th>Fib</th><th>Prot</th><th>Na</th><th>K</th><th>P</th><th>Fluids</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -739,7 +598,6 @@
         <label>Daily fiber target (g) <input type="number" name="fiberTarget" /></label>
         <label>Daily protein target (g) <input type="number" step="0.1" name="proteinTarget" /></label>
         <label>Daily fluid target (oz) <input type="number" step="0.5" name="fluidTarget" /></label>
-        <label>Daily steps target <input type="number" step="100" name="stepsTarget" /></label>
         <label>Daily sodium target (mg) <input type="number" name="sodiumTarget" /></label>
         <label>Daily potassium target (mg) <input type="number" name="potassiumTarget" /></label>
         <label>Daily phosphorus target (mg) <input type="number" name="phosphorusTarget" /></label>
@@ -819,7 +677,7 @@
         <input type="file" id="merge-import-file" accept=".json,application/json" class="visually-hidden-file" />
         <button id="btn-clear" class="danger">Clear All Data</button>
       </div>
-      <p class="hint"><strong>Replace</strong> wipes all current data and loads the file. <strong>Merge</strong> only adds labs, BP readings, medications, and symptom entries — duplicates are skipped, and recent diet, steps, advisor chat, settings, and reminders are kept untouched. Use Merge to restore historical health records without losing recent tracking.</p>
+      <p class="hint"><strong>Replace</strong> wipes all current data and loads the file. <strong>Merge</strong> only adds labs, BP readings, medications, and symptom entries — duplicates are skipped, and recent diet, advisor chat, settings, and reminders are kept untouched. Use Merge to restore historical health records without losing recent tracking.</p>
       <details style="margin-top:14px">
         <summary style="cursor:pointer;font-weight:600">Paste JSON instead (no file needed — works on iPhone)</summary>
         <p class="hint" style="margin-top:8px">Copy the contents of a Kidney Advisor export (or a medical-history JSON file), paste it here, then tap the action you want.</p>
@@ -828,7 +686,7 @@
           <button id="btn-paste-import" class="secondary">Replace from pasted text</button>
           <button id="btn-paste-merge" class="secondary">Merge from pasted text</button>
         </div>
-        <p class="hint" style="margin-top:8px"><strong>Replace</strong> wipes all current data and uses what's pasted. <strong>Merge</strong> only adds labs / BP / meds / symptoms — duplicates skipped, diet / steps / settings preserved. <strong>iPhone setup links</strong> (starting with <code>#install=</code>) auto-configure cloud sync regardless of which button you tap — the pasted credentials are applied and the gist pulls automatically.</p>
+        <p class="hint" style="margin-top:8px"><strong>Replace</strong> wipes all current data and uses what's pasted. <strong>Merge</strong> only adds labs / BP / meds / symptoms — duplicates skipped, diet / settings preserved. <strong>iPhone setup links</strong> (starting with <code>#install=</code>) auto-configure cloud sync regardless of which button you tap — the pasted credentials are applied and the gist pulls automatically.</p>
       </details>
     </div>
 
@@ -866,7 +724,7 @@
         <button id="btn-install-link-copy" class="secondary" hidden style="margin-top:6px">Copy link</button>
         <p class="hint" id="install-link-warn" hidden style="margin-top:8px;color:#a05a00">Anyone who has this link can read and write your medical-data gist. AirDrop it to yourself or email it to your own address — do not paste into iMessage threads, group chats, or screenshots.</p>
       </div>
-      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260521-1400 — MenuStat 2019 restaurant chain database (91 chains, 25k+ items)</span></p>
+      <p class="hint" style="margin-top:12px;font-size:11px;opacity:0.7">App build: <span id="build-stamp">20260522-0900 — removed step count feature</span></p>
     </div>
 
     <div class="card">
@@ -908,6 +766,6 @@
 </div>
 
 <script src="foods.js"></script>
-<script src="app.js?v=20260521-1400"></script>
+<script src="app.js?v=20260522-0900"></script>
 </body>
 </html>
